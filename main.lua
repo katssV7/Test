@@ -1,0 +1,30 @@
+-- KatssinnnHub loader: 1 link untuk semua game
+local BASE = "https://raw.githubusercontent.com/katssV7/Test/refs/heads/main/"
+
+-- [PlaceId] = "path file script di repo"
+local Games = {
+    [0000000000] = "example.lua",        -- GANTI 0000000000 dengan PlaceId game pertama
+    [1111111111] = "games/game2.lua",    -- GANTI 1111111111 dengan PlaceId game kedua (Fishing)
+}
+
+local path = Games[game.PlaceId]
+
+if not path then
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "KatssinnnHub",
+            Text = "Game ini belum didukung (PlaceId " .. tostring(game.PlaceId) .. ")",
+            Duration = 6,
+        })
+    end)
+    warn("[KatssinnnHub] Game belum didukung, PlaceId: " .. tostring(game.PlaceId))
+    return
+end
+
+local ok, err = pcall(function()
+    loadstring(game:HttpGet(BASE .. path))()
+end)
+
+if not ok then
+    warn("[KatssinnnHub] Gagal memuat script: " .. tostring(err))
+end
