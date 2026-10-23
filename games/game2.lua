@@ -1,0 +1,807 @@
+--KatssinnnHub | Game 2 (Fishing)
+-- UI / library / tema sama dengan game 1, hanya fitur farm yang diganti.
+local Library = loadstring(game:HttpGet(
+    "https://raw.githubusercontent.com/katssV7/Test/refs/heads/main/source.lua"
+))()
+
+local Cfg  = Library.Cfg
+local Exec = Library.Exec
+
+local function N(title, desc, color, dur)
+    Library:Notification({ Title=title, Desc=desc or "", Color=color or "#6495ED", Duration=dur or 3 })
+end
+
+local Window = Library:Window({
+    Title            = "KatssinnnHub",
+    SubTitle         = "OnTop",
+    ToggleKey        = Enum.KeyCode.RightControl,
+    Icon             = "rbxassetid://104055321996495",
+    ToggleIcon       = "rbxassetid://104055321996495",
+    ToggleBtnCorner  = UDim.new(1, 0),
+    FolderName       = "SkidPlayground",
+    AutoLoad         = function(name, data)
+        N("Restored", name, "#50C864", 3)
+    end,
+    AutoScale = true,
+    Scale     = 1.45,
+    Theme = {
+        Accent       = "#FF007F",
+        Background   = "#0B0B0B",
+        Row          = "#121212",
+        RowAlt       = "#0D0D0D",
+        Stroke       = "#202020",
+        Text         = "#EBEBEB",
+        SubText      = "#949494",
+        TabBg        = "#0D0D0D",
+        TabStroke    = "#4B0026",
+        TabImage     = "#FF007F",
+        DropBg       = "#101010",
+        ToggleBg     = "#0B0B0B",
+        Font         = Enum.Font.Gotham,
+        FontBold     = Enum.Font.GothamBold,
+        FontMedium   = Enum.Font.GothamMedium,
+        CornerRadius = UDim.new(0, 5),
+    },
+})
+
+Library:SetExtraTitle("R4")
+Library:SetExtraSubTitle("is tuff")
+
+local RS = game:GetService("ReplicatedStorage")
+local LP = game:GetService("Players").LocalPlayer
+
+-- ===== REMOTES =====
+local Container
+local function GetContainer()
+    if Container and Container.Parent then return Container end
+    local ok, res = pcall(function()
+        return RS:WaitForChild("rbxts_include", 8)
+            :WaitForChild("node_modules", 5)
+            :WaitForChild("@rbxts", 5)
+            :WaitForChild("remo", 5)
+            :WaitForChild("src", 5)
+            :WaitForChild("container", 5)
+    end)
+    Container = ok and res or nil
+    return Container
+end
+
+local RemoteCache = {}
+local function GetRemote(name)
+    local r = RemoteCache[name]
+    if r and r.Parent then return r end
+    local c = GetContainer()
+    r = c and c:WaitForChild(name, 5)
+    RemoteCache[name] = r
+    return r
+end
+
+-- ===== DATA =====
+local BAITS = {
+    "Starter", "Novice", "Reef", "Deep Sea", "Koi", "River", "Puffer", "Glo",
+    "Seal", "Ray", "Octopus", "Axolotl", "Jelly", "Whale", "Squid", "Shark",
+    "Megalodon", "Kraken", "Maw", "Bloop", "Ocean Eater", "Serpent",
+    "Doom Rex", "Grand Turtle",
+}
+
+local CLAIM_DELAY = 0.1
+local BUY_DELAY   = 1
+local SELL_DELAY  = 1
+local SelectedBaits = { "Starter" }
+local LastClaimCount = 0
+
+local runId = { claim = 0, buy = 0, sell = 0 }
+
+local function Loop(key, enabled, getDelay, fn)
+    runId[key] += 1
+    if not enabled then return end
+    local id = runId[key]
+    task.spawn(function()
+        while runId[key] == id do
+            local ok, err = pcall(fn)
+            if not ok then warn("[" .. key .. "] " .. tostring(err)) end
+            task.wait(getDelay())
+        end
+    end)
+end
+
+-- ID jaring (workspace.Ponds.<pond>.Buildings.<uuid>)
+local function GetNetIDs()
+    local ids = {}
+    local ponds = workspace:FindFirstChild("Ponds")
+    if not ponds then return ids end
+    for _, pond in ipairs(ponds:GetChildren()) do
+        local buildings = pond:FindFirstChild("Buildings")
+        if buildings then
+            for _, net in ipairs(buildings:GetChildren()) do
+                local name = net.Name
+                if #name >= 32 and name:find("%-") then
+                    table.insert(ids, name)
+                end
+            end
+        end
+    end
+    return ids
+end
+
+-- claim semua jaring sekaligus (paralel)
+local function ClaimAll()
+    local r = GetRemote("bait.collectAllFish")
+    if not r then return 0 end
+    local ids = GetNetIDs()
+    for _, id in ipairs(ids) do
+        task.spawn(function() pcall(r.FireServer, r, id) end)
+    end
+    LastClaimCount = #ids
+    return #ids
+end
+
+local function BuyBaits()
+    local r = GetRemote("shop.purchaseBait")
+    if not r then return end
+    for _, bait in ipairs(SelectedBaits) do
+        pcall(r.FireServer, r, bait)
+    end
+end
+
+local function SellAll()
+    local r = GetRemote("sellFish.sellAllFish")
+    if r then r:FireServer() end
+end
+
+local P_Main = Window:NewPage({
+    Title         = "Main",
+    Desc          = "Claim fish, buy bait & sell fish",
+    Icon          = "toggle-left",
+    TabImageColor = "#FF007F",
+})
+
+-- baris "xxx settings [v]" untuk buka/tutup pengaturan milik satu toggle
+local function Group(title, build)
+    local items, open = {}, false
+    local header
+    header = P_Main:Button({
+        Title    = title,
+        Desc     = "Buka / tutup pengaturan",
+        Text     = "v",
+        Callback = function()
+            open = not open
+            header:SetText(open and "^" or "v")
+            for _, e in ipairs(items) do e:SetVisible(open) end
+        end,
+    })
+    build(function(e)
+        e:SetVisible(false)
+        items[#items + 1] = e
+        return e
+    end)
+end
+
+-- ===== CLAIM FISH =====
+P_Main:Section("Farm")
+
+local tog_claim = P_Main:Toggle({
+    Title        = "Auto Claim Fish",
+    Desc         = "Claim semua jaring sekaligus terus-menerus",
+    Value        = false,
+    id           = "auto_claim",
+    CornerRadius = UDim.new(1, 0),
+    Callback     = function(v)
+        Loop("claim", v, function() return CLAIM_DELAY end, function()
+            ClaimAll()
+        end)
+        N("Auto Claim Fish", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
+    end,
+})
+
+Group("Claim settings", function(add)
+    add(P_Main:Slider({
+        Title    = "Claim delay",
+        Desc     = "Jeda antar claim (detik)",
+        Min      = 0.05, Max = 5, Value = 0.1,
+        Rounding = 2, Suffix = "s",
+        id       = "claim_delay",
+        Callback = function(v) CLAIM_DELAY = v end,
+    }))
+end)
+
+-- ===== BAIT =====
+P_Main:Divider()
+P_Main:Section("Bait")
+
+P_Main:Dropdown({
+    Title    = "Bait",
+    Desc     = "Pilih satu atau lebih bait untuk dibeli",
+    List     = BAITS,
+    Value    = { "Starter" },
+    id       = "bait_select",
+    Callback = function(v)
+        local list = {}
+        if type(v) == "table" then
+            for _, b in ipairs(v) do list[#list + 1] = b end
+        elseif v then
+            list[1] = tostring(v)
+        end
+        SelectedBaits = list
+    end,
+})
+
+local tog_buy = P_Main:Toggle({
+    Title        = "Auto Buy Bait",
+    Desc         = "Beli bait yang dipilih terus-menerus",
+    Value        = false,
+    id           = "auto_buy_bait",
+    CornerRadius = UDim.new(1, 0),
+    Callback     = function(v)
+        Loop("buy", v, function() return BUY_DELAY end, function()
+            BuyBaits()
+        end)
+        N("Auto Buy Bait", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
+    end,
+})
+
+Group("Bait settings", function(add)
+    add(P_Main:Slider({
+        Title    = "Buy delay",
+        Min      = 0.1, Max = 10, Value = 1,
+        Rounding = 1, Suffix = "s",
+        id       = "buy_delay",
+        Callback = function(v) BUY_DELAY = v end,
+    }))
+end)
+
+-- ===== SELL =====
+P_Main:Divider()
+P_Main:Section("Sell")
+
+local tog_sell = P_Main:Toggle({
+    Title        = "Auto Sell Fish",
+    Desc         = "Jual semua ikan terus-menerus",
+    Value        = false,
+    id           = "auto_sell",
+    CornerRadius = UDim.new(1, 0),
+    Callback     = function(v)
+        Loop("sell", v, function() return SELL_DELAY end, function()
+            SellAll()
+        end)
+        N("Auto Sell Fish", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
+    end,
+})
+
+Group("Sell settings", function(add)
+    add(P_Main:Slider({
+        Title    = "Sell delay",
+        Min      = 0.5, Max = 10, Value = 1,
+        Rounding = 1, Suffix = "s",
+        id       = "sell_delay",
+        Callback = function(v) SELL_DELAY = v end,
+    }))
+end)
+
+-- ===== MANUAL =====
+P_Main:Divider()
+P_Main:Section("Manual")
+
+P_Main:MultiButton({
+    Buttons = {
+        { Text="Claim", Color="#0088FF", Callback=function()
+            N("Claim", ClaimAll() .. " jaring", "#50C864")
+        end },
+        { Text="Buy Bait", Callback=function() BuyBaits() end },
+        { Text="Sell", Color="#50C864", Callback=function() pcall(SellAll) end },
+    },
+})
+
+P_Main:MultiButton({
+    Buttons = {
+        { Text="All ON",  Color="#50C864", Callback=function()
+            tog_claim:SetValue(true); tog_buy:SetValue(true); tog_sell:SetValue(true)
+        end },
+        { Text="All OFF", Color="#DC3232", Callback=function()
+            tog_claim:SetValue(false); tog_buy:SetValue(false); tog_sell:SetValue(false)
+        end },
+    },
+})
+
+-- ===== STATS =====
+local P_Stat = Window:NewPage({
+    Title         = "Leaderstats",
+    Desc          = "Profil & stats pemain",
+    Icon          = "layout",
+    TabImageColor = "#0088FF",
+})
+
+P_Stat:Section("Profil")
+
+P_Stat:Paragraph({
+    Title         = LP.DisplayName,
+    Desc          = "@" .. LP.Name,
+    Thumbnail     = "rbxthumb://type=AvatarHeadShot&id=" .. LP.UserId .. "&w=150&h=150",
+    ThumbnailSize = 56,
+})
+
+P_Stat:Divider()
+P_Stat:Section("Leaderstats")
+
+-- label dibuat otomatis dari isi leaderstats game ini
+local statLabels = {}
+do
+    local ls = LP:FindFirstChild("leaderstats") or LP:WaitForChild("leaderstats", 5)
+    if ls then
+        for _, v in ipairs(ls:GetChildren()) do
+            if v:IsA("ValueBase") then
+                statLabels[#statLabels + 1] = {
+                    obj   = v,
+                    label = P_Stat:RightLabel({ Title = v.Name, Right = tostring(v.Value) }),
+                }
+            end
+        end
+    end
+    if #statLabels == 0 then
+        P_Stat:Label({ Title = "Leaderstats tidak ditemukan", Desc = "Game ini tidak punya leaderstats" })
+    end
+end
+
+P_Stat:Divider()
+P_Stat:Section("Status")
+
+local lblNets  = P_Stat:RightLabel({ Title = "Jaring",        Right = "-" })
+local lblClaim = P_Stat:RightLabel({ Title = "Claim terakhir", Right = "-" })
+
+task.spawn(function()
+    while task.wait(1) do
+        pcall(function()
+            for _, s in ipairs(statLabels) do
+                s.label:SetRight(tostring(s.obj.Value))
+            end
+            lblNets:SetRight(tostring(#GetNetIDs()))
+            lblClaim:SetRight(LastClaimCount .. " jaring")
+        end)
+    end
+end)
+
+-- ===== INPUTS =====
+local P_Inp = Window:NewPage({
+    Title         = "Inputs",
+    Desc          = "Input & keybind tests",
+    Icon          = "type",
+    TabImageColor = "#00CC66",
+})
+
+P_Inp:Section("Input fields")
+
+local inp1 = P_Inp:Input({
+    Title       = "With clipboard copy button",
+    Placeholder = "Type something...",
+    ShowButton  = Exec.clipboard,
+    id          = "inp1",
+    Callback    = function(v) N("Input 1", v) end,
+})
+
+local inp2 = P_Inp:Input({
+    Title         = "Clear on submit",
+    Placeholder   = "Clears after Enter...",
+    ClearOnSubmit = true,
+    id            = "inp2",
+    Callback      = function(v) N("Submitted", v) end,
+})
+
+local inp3 = P_Inp:Input({
+    Title       = "No copy button",
+    Placeholder = "Plain input...",
+    ShowButton  = false,
+    id          = "inp3",
+    Callback    = function(v) end,
+})
+
+P_Inp:MultiButton({
+    Buttons = {
+        { Text="Read all", Callback=function() N("Inputs", inp1:GetValue().." | "..inp2:GetValue().." | "..inp3:GetValue()) end },
+        { Text="Set inp1", Callback=function() inp1:SetValue("Hello") end },
+        { Text="Clear",    Callback=function() inp1:SetValue(""); inp2:SetValue(""); inp3:SetValue("") end },
+    },
+})
+
+P_Inp:Divider()
+P_Inp:Section("Keybinds")
+
+local key1 = P_Inp:Keybind({
+    Title    = "Keybind A",
+    Desc     = "Click to rebind, then press any key",
+    Value    = Enum.KeyCode.H,
+    id       = "key1",
+    Callback = function(k) N("Key A fired", k.Name) end,
+})
+
+local key2 = P_Inp:Keybind({
+    Title    = "Keybind B",
+    Desc     = "Flips Auto Claim when pressed",
+    Value    = Enum.KeyCode.J,
+    id       = "key2",
+    Callback = function() tog_claim:SetValue(not tog_claim:GetValue()) end,
+})
+
+P_Inp:Button({
+    Title    = "Read keybinds",
+    Text     = "Read",
+    Callback = function() N("Keys", key1:GetValue().Name.." | "..key2:GetValue().Name) end,
+})
+
+-- ===== DROPDOWNS =====
+local P_Drop = Window:NewPage({
+    Title         = "Dropdowns",
+    Desc          = "Dropdown element tests",
+    Icon          = "chevron-down",
+    TabImageColor = "#9955FF",
+})
+
+P_Drop:Section("Single select")
+
+local drop1 = P_Drop:Dropdown({
+    Title    = "Pick a color",
+    List     = { "Red", "Orange", "Yellow", "Green", "Blue", "Indigo", "Violet" },
+    Value    = "Red",
+    id       = "drop1",
+    Callback = function(v) N("Color", v) end,
+})
+
+local drop2 = P_Drop:Dropdown({
+    Title    = "Pick a number",
+    List     = { "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten" },
+    Value    = "One",
+    id       = "drop2",
+    Callback = function(v) N("Number", v) end,
+})
+
+P_Drop:MultiButton({
+    Buttons = {
+        { Text="Read drop1", Callback=function() N("Drop1", tostring(drop1:GetValue())) end },
+        { Text="Reset drop1", Callback=function() drop1:SetValue("Red") end },
+        { Text="Add item", Callback=function() drop1:AddList("Extra") N("Added","Extra to drop1") end },
+    },
+})
+
+P_Drop:Divider()
+P_Drop:Section("Multi select")
+
+local drop3 = P_Drop:Dropdown({
+    Title    = "Pick multiple fruits",
+    List     = { "Apple", "Banana", "Cherry", "Durian", "Elderberry", "Fig", "Grape" },
+    Value    = { "Apple", "Banana" },
+    id       = "drop3",
+    Callback = function(v) N("Fruits", table.concat(v, ", ")) end,
+})
+
+P_Drop:MultiButton({
+    Buttons = {
+        { Text="Read multi",  Callback=function()
+            local v = drop3:GetValue()
+            N("Multi", type(v)=="table" and table.concat(v,", ") or tostring(v))
+        end },
+        { Text="Clear multi", Color="#DC3232", Callback=function() drop3:Clear() end },
+    },
+})
+
+-- ===== DISPLAY =====
+local P_Disp = Window:NewPage({
+    Title         = "Display",
+    Desc          = "All display elements",
+    Icon          = "layout",
+    TabImageColor = "#CC9900",
+})
+
+P_Disp:Section("Labels")
+
+P_Disp:Label({ Title="Static label", Desc="Read-only text, no interaction" })
+P_Disp:Label({ Title="<b>Rich text</b> in label", Desc="<i>Italic desc</i> with <font color=\"rgb(100,200,255)\">colored text</font>" })
+
+local rl1 = P_Disp:RightLabel({ Title="Executor",  Right=Exec.name })
+local rl2 = P_Disp:RightLabel({ Title="Clipboard", Right=tostring(Exec.clipboard) })
+local rl3 = P_Disp:RightLabel({ Title="Live count", Right="0" })
+
+do
+    local count = 0
+    task.spawn(function()
+        while task.wait(1) do
+            count = count + 1
+            rl3:SetRight(tostring(count))
+        end
+    end)
+end
+
+P_Disp:Divider()
+P_Disp:Section("Paragraphs")
+
+P_Disp:Paragraph({
+    Title = "Basic paragraph",
+    Desc  = "A styled block of text. Supports <b>bold</b>, <i>italic</i>, and color.",
+})
+
+P_Disp:Paragraph({
+    Title   = "Paragraph with buttons",
+    Desc    = "An optional row of action buttons at the bottom of the paragraph.",
+    Buttons = {
+        { Text="Accept", Color="#50C864", Callback=function() N("Accepted","","#50C864") end },
+        { Text="Decline", Color="#DC3232", Callback=function() N("Declined","","#DC3232") end },
+        { Text="Ignore", Callback=function() N("Ignored") end },
+    },
+})
+
+P_Disp:Divider()
+P_Disp:Section("Banner")
+
+P_Disp:Banner({ Image="rbxassetid://104055321996495", Height=100 })
+
+P_Disp:Divider()
+P_Disp:Section("Popups & Dialogs")
+
+P_Disp:MultiButton({
+    Buttons = {
+        { Text="Popup",  Callback=function()
+            Window:Popup({
+                Title   = "Popup",
+                Desc    = "A modal dialog with custom buttons.",
+                Buttons = {
+                    { Text="Confirm", Style="main", Callback=function() N("Confirmed","","#50C864") end },
+                    { Text="Cancel",  Style="alt",  Callback=function() N("Cancelled") end },
+                },
+            })
+        end },
+        { Text="Dialog", Callback=function()
+            Window:Dialog({
+                Title="Dialog", Desc="Quick confirm or cancel.",
+                ConfirmText="Yes", CancelText="No",
+                OnConfirm=function() N("Yes","","#50C864") end,
+                OnCancel=function() N("No") end,
+            })
+        end },
+    },
+})
+
+-- ===== CONFIG =====
+local P_Cfg = Window:NewPage({
+    Title         = "Config",
+    Desc          = "Config system",
+    Icon          = "save",
+    TabImageColor = "#888888",
+})
+
+P_Cfg:Section("Config manager")
+
+local cfgDrop = P_Cfg:Dropdown({
+    Title="Saved configs", List=Cfg:listcfg(), Placeholder="Select config...",
+    Callback=function(v) end,
+})
+
+local function RefreshDrop()
+    cfgDrop:SetList(Cfg:listcfg())
+    if Cfg:ActiveCfg() then cfgDrop:SetValue(Cfg:ActiveCfg()) end
+end
+
+local cfgName = P_Cfg:Input({
+    Title="Config name", Placeholder="Enter name...", ShowButton=false,
+})
+
+P_Cfg:MultiButton({
+    Buttons = {
+        { Text="Create", Color="#50C864", Callback=function()
+            local n=cfgName:GetValue(); if n=="" then N("Config","Enter a name","#FFA500"); return end
+            if not Cfg:addcfg(n) then N("Config","Exists","#FFA500"); return end
+            RefreshDrop(); N("Created",'"'..n..'"',"#50C864")
+        end },
+        { Text="Save", Callback=function()
+            local n=cfgDrop:GetValue() or cfgName:GetValue()
+            if not n or n=="" then N("Config","Select or name first","#FFA500"); return end
+            Cfg:updcfg(n); RefreshDrop(); N("Saved",'"'..n..'"',"#50C864")
+        end },
+        { Text="Load", Color="#0088FF", Callback=function()
+            local n=cfgDrop:GetValue() or cfgName:GetValue()
+            if not n or n=="" then N("Config","Select first","#FFA500"); return end
+            if Cfg:loadcfg(n) then N("Loaded",'"'..n..'"',"#50C864")
+            else N("Error","Not found","#DC3232") end
+        end },
+        { Text="Del", Color="#DC3232", Callback=function()
+            local n=cfgDrop:GetValue() or cfgName:GetValue(); if not n or n=="" then return end
+            Window:Dialog({ Title="Delete", Desc='Delete "'..n..'"?', ConfirmText="Delete", CancelText="Cancel",
+                OnConfirm=function() Cfg:delcfg(n); RefreshDrop(); N("Deleted",'"'..n..'"') end })
+        end },
+    },
+})
+
+P_Cfg:Divider()
+P_Cfg:Section("Import / Export")
+
+local cfgExportIn = P_Cfg:Input({ Title="Export JSON", Placeholder="Click Export...", ShowButton=Exec.clipboard })
+
+P_Cfg:MultiButton({
+    Buttons = {
+        { Text="Export", Color="#50C864", Callback=function()
+            local j = Cfg:exportcfg()
+            if j then cfgExportIn:SetValue(j); N("Exported","JSON ready","#50C864")
+            else N("Error","No active config","#DC3232") end
+        end },
+        { Text="Import", Color="#0088FF", Callback=function()
+            local name = cfgName:GetValue(); local j = cfgExportIn:GetValue()
+            if name=="" or j=="" then N("Import","Enter name and JSON","#FFA500"); return end
+            if Cfg:importcfg(name, j) then RefreshDrop(); N("Imported",'"'..name..'"',"#50C864")
+            else N("Error","Invalid JSON","#DC3232") end
+        end },
+    },
+})
+
+P_Cfg:Divider()
+P_Cfg:Section("Auto load")
+
+P_Cfg:MultiButton({
+    Buttons = {
+        { Text="Pin auto-load", Color="#50C864", Callback=function()
+            local n=cfgDrop:GetValue(); if not n or n=="" then N("Config","Select first","#FFA500"); return end
+            Cfg:setautoload(n); N("Auto-load",'"'..n..'" loads next run',"#50C864")
+        end },
+        { Text="Clear pin", Color="#FF6600", Callback=function() Cfg:clearautoload(); N("Auto-load","Cleared") end },
+    },
+})
+
+
+P_Cfg:Divider()
+P_Cfg:RightLabel({ Title="Active",  Right=Cfg:ActiveCfg() or "none" })
+P_Cfg:RightLabel({ Title="Folder",  Right=Cfg:GetFolder() })
+P_Cfg:RightLabel({ Title="Configs", Right=tostring(#Cfg:listcfg()) })
+
+-- ===== SETTINGS =====
+local P_Set = Window:NewPage({
+    Title         = "Settings",
+    Desc          = "UI, theme & notifications",
+    Icon          = "settings",
+    TabImageColor = "#444444",
+})
+
+P_Set:Section("Interface")
+
+Library:AddSizeSlider(P_Set)
+
+P_Set:Divider()
+P_Set:Section("Toggle key")
+
+P_Set:Dropdown({
+    Title    = "Toggle key",
+    Desc     = "Key to show/hide the UI",
+    List     = { "RightControl", "F1", "F2", "F3", "F4", "RightAlt", "RightShift", "Delete", "End" },
+    Value    = "RightControl",
+    Callback = function(v)
+        local ok, kc = pcall(function() return Enum.KeyCode[v] end)
+        if ok and kc then
+            N("Toggle key", v)
+        end
+    end,
+})
+
+P_Set:Divider()
+P_Set:Section("Toggle button shape")
+
+P_Set:MultiButton({
+    Title   = "Toggle button UICorner",
+    Buttons = {
+        { Text="Circle",  Callback=function() Library:SetToggleBtnCorner(UDim.new(1,0))  N("Shape","Circle")  end },
+        { Text="Rounded", Callback=function() Library:SetToggleBtnCorner(UDim.new(0,8))  N("Shape","Rounded") end },
+        { Text="Square",  Callback=function() Library:SetToggleBtnCorner(UDim.new(0,0))  N("Shape","Square")  end },
+    },
+})
+
+P_Set:Button({
+    Title    = "Change toggle button icon",
+    Desc     = "Updates the floating UI toggle button",
+    Text     = "Change",
+    Callback = function() Library:SetToggleIcon("rbxassetid://104055321996495"); N("Icon","Updated") end,
+})
+
+P_Set:Divider()
+P_Set:Section("Font")
+
+P_Set:Dropdown({
+    Title    = "UI Font",
+    List     = { "Gotham", "GothamBold", "GothamMedium", "Montserrat", "Arial", "AvenirHeavy", "Highway" },
+    Value    = "Gotham",
+    Callback = function(v)
+        local ok, f = pcall(function() return Enum.Font[v] end)
+        if ok and f then
+            Library:SetTheme({ Font=f, FontBold=f, FontMedium=f })
+            N("Font", v)
+        end
+    end,
+})
+
+P_Set:Divider()
+P_Set:Section("Header text")
+
+P_Set:MultiButton({
+    Buttons = {
+        { Text="Set right title",  Callback=function() Library:SetExtraTitle("gooner"); Library:SetExtraSubTitle("detected") end },
+        { Text="Clear right text", Callback=function() Library:SetExtraTitle(""); Library:SetExtraSubTitle("") end },
+    },
+})
+
+P_Set:Divider()
+P_Set:Section("Lock / Unlock")
+
+P_Set:Paragraph({
+    Title = "Lock covers the entire UI",
+    Desc  = "Library:Lock() overlays every page. Nothing can be clicked. Library:Unlock() removes it.",
+})
+
+P_Set:MultiButton({
+    Buttons = {
+        { Text="Lock UI",   Color="#DC3232", Callback=function() Library:Lock() end },
+        { Text="Unlock UI", Color="#50C864", Callback=function() Library:Unlock() end },
+    },
+})
+
+P_Set:Divider()
+P_Set:Section("Custom theme")
+
+local themeAccent = P_Set:Input({ Title="Accent color (hex)", Placeholder="#FF007F", id="theme_accent" })
+local themeTabStroke = P_Set:Input({ Title="Tab stroke (hex)", Placeholder="#4B0026", id="theme_tab_stroke" })
+local themeCorner = P_Set:Slider({ Title="Corner radius", Min=0, Max=16, Value=5, Rounding=0, id="theme_corner" })
+
+P_Set:MultiButton({
+    Buttons = {
+        { Text="Apply theme", Color="#50C864", Callback=function()
+            local accent = themeAccent:GetValue()
+            local tabstroke = themeTabStroke:GetValue()
+            local corner = themeCorner:GetValue()
+            local newTheme = {}
+            if accent~="" then
+                newTheme.Accent   = accent
+                newTheme.TabImage = accent
+            end
+            if tabstroke~="" then newTheme.TabStroke = tabstroke end
+            if corner then newTheme.CornerRadius = UDim.new(0, corner) end
+            Library:SetTheme(newTheme)
+            N("Theme applied", "Custom theme set", "#50C864")
+        end },
+        { Text="Save as config", Callback=function()
+            local n = "theme_"..tostring(os.time())
+            Cfg:addcfg(n)
+            Cfg:updcfg(n)
+            RefreshDrop()
+            N("Saved", '"'..n..'"', "#50C864")
+        end },
+    },
+})
+
+P_Set:Divider()
+P_Set:Section("Theme presets")
+
+P_Set:MultiButton({
+    Buttons = {
+        { Text="Pink",   Callback=function() Library:SetTheme({Accent="#FF007F",TabImage="#FF007F",TabStroke="#4B0026"}) end },
+        { Text="Blue",   Color="#0088FF", Callback=function() Library:SetTheme({Accent="#0088FF",TabImage="#0088FF",TabStroke="#003366"}) end },
+        { Text="Green",  Color="#00CC66", Callback=function() Library:SetTheme({Accent="#00CC66",TabImage="#00CC66",TabStroke="#004D26"}) end },
+        { Text="Purple", Color="#9955FF", Callback=function() Library:SetTheme({Accent="#9955FF",TabImage="#9955FF",TabStroke="#330066"}) end },
+    },
+})
+
+P_Set:Divider()
+P_Set:Section("Notification tests")
+
+P_Set:MultiButton({
+    Buttons = {
+        { Text="Info",    Color="#6495ED", Callback=function() N("Info",    "Something to note",     "#6495ED",4) end },
+        { Text="Success", Color="#50C864", Callback=function() N("Success", "<b>Done</b>",            "#50C864",4) end },
+        { Text="Warning", Color="#FFA500", Callback=function() N("Warning", "Check <i>this</i>",      "#FFA500",4) end },
+        { Text="Error",   Color="#DC3232", Callback=function() N("Error",   "Something broke",        "#DC3232",4) end },
+    },
+})
+
+P_Set:MultiButton({
+    Buttons = {
+        { Text="With icon", Callback=function()
+            Library:Notification({ Title="Notification", Desc="Has an icon", Color="#FF007F", Duration=3, Icon="rbxassetid://104055321996495" })
+        end },
+        { Text="Long one", Callback=function()
+            Library:Notification({ Title="Long notification", Desc="This one has a longer description that wraps to multiple lines to test the layout", Color="#9955FF", Duration=5 })
+        end },
+    },
+})
+
+N("<b>Skid Playground</b>", Exec.name.."  ·  RCtrl to toggle", "#FF007F", 5)
