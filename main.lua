@@ -3,8 +3,8 @@ local BASE = "https://raw.githubusercontent.com/katssV7/Test/refs/heads/main/"
 
 -- [PlaceId] = "path file script di repo"
 local Games = {
-    [0000000000] = "example.lua",        -- GANTI 0000000000 dengan PlaceId game pertama
-    [1111111111] = "games/game2.lua",    -- GANTI 1111111111 dengan PlaceId game kedua (Fishing)
+    [110730550789828] = "example.lua",        -- GANTI 0000000000 dengan PlaceId game pertama
+    [91296119701853] = "games/game2.lua",    -- GANTI 1111111111 dengan PlaceId game kedua (Fishing)
 }
 
 local path = Games[game.PlaceId]
