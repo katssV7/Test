@@ -47,83 +47,125 @@ Library:SetExtraTitle("R4")
 Library:SetExtraSubTitle("is tuff")
 
 
-local P_Tog = Window:NewPage({
-    Title         = "Toggles",
-    Desc          = "Toggle element tests",
+
+local RS = game:GetService("ReplicatedStorage")
+
+local P_Main = Window:NewPage({
+    Title         = "Main",
+    Desc          = "Auto farm, rebirth & sell",
     Icon          = "toggle-left",
     TabImageColor = "#FF007F",
 })
 
-P_Tog:Section("Basic toggles")
+P_Main:Section("Auto")
 
-local tog_round = P_Tog:Toggle({
-    Title        = "Round toggle",
-    Desc         = "CornerRadius = UDim.new(1,0)",
+local FARM_DELAY = 0.1
+local REBIRTH_DELAY = 1
+local SELL_DELAY = 1
+
+local runId = { farm = 0, rebirth = 0, sell = 0 }
+
+local function Loop(key, enabled, getDelay, fn)
+    runId[key] += 1
+    if not enabled then return end
+    local id = runId[key]
+    task.spawn(function()
+        while runId[key] == id do
+            local ok, err = pcall(fn)
+            if not ok then warn("[" .. key .. "] " .. tostring(err)) end
+            task.wait(getDelay())
+        end
+    end)
+end
+
+local tog_farm = P_Main:Toggle({
+    Title        = "Auto Farm",
+    Desc         = "Fire SwingReward terus-menerus",
     Value        = false,
-    id           = "tog_round",
+    id           = "auto_farm",
     CornerRadius = UDim.new(1, 0),
-    Callback     = function(v) N("Round", tostring(v)) end,
+    Callback     = function(v)
+        Loop("farm", v, function() return FARM_DELAY end, function()
+            RS:WaitForChild("SwingReward"):FireServer()
+        end)
+        N("Auto Farm", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
+    end,
 })
 
-local tog_square = P_Tog:Toggle({
-    Title        = "Square toggle",
-    Desc         = "CornerRadius = UDim.new(0,0)",
-    Value        = true,
-    id           = "tog_square",
-    CornerRadius = UDim.new(0, 0),
-    Callback     = function(v) N("Square", tostring(v)) end,
-})
-
-local tog_soft = P_Tog:Toggle({
-    Title        = "Soft square",
-    Desc         = "CornerRadius = UDim.new(0,4)",
+local tog_rebirth = P_Main:Toggle({
+    Title        = "Auto Rebirth",
+    Desc         = "Invoke RebirthFunc terus-menerus",
     Value        = false,
-    id           = "tog_soft",
-    CornerRadius = UDim.new(0, 4),
-    Callback     = function(v) N("Soft", tostring(v)) end,
-})
-
-P_Tog:Divider()
-P_Tog:Section("Custom icon toggle")
-
-local tog_icon = P_Tog:Toggle({
-    Title        = "Toggle with custom icon",
-    Desc         = "Icon shows when enabled",
-    Value        = false,
-    id           = "tog_icon",
+    id           = "auto_rebirth",
     CornerRadius = UDim.new(1, 0),
-    Icon         = "rbxassetid://104055321996495",
-    Callback     = function(v) N("Custom icon toggle", tostring(v)) end,
+    Callback     = function(v)
+        Loop("rebirth", v, function() return REBIRTH_DELAY end, function()
+            RS:WaitForChild("RebirthFunc"):InvokeServer()
+        end)
+        N("Auto Rebirth", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
+    end,
 })
 
-P_Tog:Button({
-    Title    = "Change icon at runtime",
-    Desc     = "Calls :SetIcon() on the toggle above",
-    Text     = "Set icon",
-    Callback = function() tog_icon:SetIcon("rbxassetid://104055321996495") N("Icon","Set") end,
+local tog_sell = P_Main:Toggle({
+    Title        = "Auto Sell",
+    Desc         = "Fire SellTreasure terus-menerus",
+    Value        = false,
+    id           = "auto_sell",
+    CornerRadius = UDim.new(1, 0),
+    Callback     = function(v)
+        Loop("sell", v, function() return SELL_DELAY end, function()
+            RS:WaitForChild("SellTreasure"):FireServer()
+        end)
+        N("Auto Sell", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
+    end,
 })
 
-P_Tog:Divider()
-P_Tog:Section("Enable / Disable")
+P_Main:Divider()
+P_Main:Section("Delay")
 
-local tog_dis = P_Tog:Toggle({
-    Title   = "Disabled toggle",
-    Desc    = "Starts disabled, click buttons below",
-    Value   = false,
-    id      = "tog_dis",
-    Enabled = false,
-    Callback = function(v) end,
+P_Main:Slider({
+    Title    = "Farm delay",
+    Desc     = "Jeda antar swing (detik)",
+    Min      = 0.05, Max = 1, Value = 0.1,
+    Rounding = 2, Suffix = "s",
+    id       = "farm_delay",
+    Callback = function(v) FARM_DELAY = v end,
 })
 
-P_Tog:MultiButton({
+P_Main:Slider({
+    Title    = "Rebirth delay",
+    Min      = 0.5, Max = 10, Value = 1,
+    Rounding = 1, Suffix = "s",
+    id       = "rebirth_delay",
+    Callback = function(v) REBIRTH_DELAY = v end,
+})
+
+P_Main:Slider({
+    Title    = "Sell delay",
+    Min      = 0.5, Max = 10, Value = 1,
+    Rounding = 1, Suffix = "s",
+    id       = "sell_delay",
+    Callback = function(v) SELL_DELAY = v end,
+})
+
+P_Main:Divider()
+P_Main:Section("Manual")
+
+P_Main:MultiButton({
     Buttons = {
-        { Text="Enable",  Color="#50C864", Callback=function() tog_dis:Enable();  N("Toggle","Enabled","#50C864") end },
-        { Text="Disable", Color="#DC3232", Callback=function() tog_dis:Disable(); N("Toggle","Disabled","#DC3232") end },
-        { Text="Flip",                     Callback=function() tog_round:SetValue(not tog_round:GetValue()) end },
-        { Text="Hide",                     Callback=function() tog_soft:SetVisible(false) end },
-        { Text="Show",                     Callback=function() tog_soft:SetVisible(true) end },
+        { Text="Swing",   Callback=function() RS:WaitForChild("SwingReward"):FireServer() end },
+        { Text="Rebirth", Color="#0088FF", Callback=function() pcall(function() RS:WaitForChild("RebirthFunc"):InvokeServer() end) end },
+        { Text="Sell",    Color="#50C864", Callback=function() RS:WaitForChild("SellTreasure"):FireServer() end },
     },
 })
+
+P_Main:MultiButton({
+    Buttons = {
+        { Text="All ON",  Color="#50C864", Callback=function() tog_farm:SetValue(true);  tog_rebirth:SetValue(true);  tog_sell:SetValue(true)  end },
+        { Text="All OFF", Color="#DC3232", Callback=function() tog_farm:SetValue(false); tog_rebirth:SetValue(false); tog_sell:SetValue(false) end },
+    },
+})
+
 
 
 local P_Sli = Window:NewPage({
@@ -244,10 +286,10 @@ local key1 = P_Inp:Keybind({
 
 local key2 = P_Inp:Keybind({
     Title    = "Keybind B",
-    Desc     = "Flips Round toggle when pressed",
+    Desc     = "Flips Auto Farm when pressed",
     Value    = Enum.KeyCode.J,
     id       = "key2",
-    Callback = function() tog_round:SetValue(not tog_round:GetValue()) end,
+    Callback = function() tog_farm:SetValue(not tog_farm:GetValue()) end,
 })
 
 P_Inp:Button({
@@ -566,7 +608,7 @@ P_Set:MultiButton({
 
 P_Set:Divider()
 P_Set:Section("Custom theme")
-
+ 
 local themeAccent = P_Set:Input({ Title="Accent color (hex)", Placeholder="#FF007F", id="theme_accent" })
 local themeTabStroke = P_Set:Input({ Title="Tab stroke (hex)", Placeholder="#4B0026", id="theme_tab_stroke" })
 local themeCorner = P_Set:Slider({ Title="Corner radius", Min=0, Max=16, Value=5, Rounding=0, id="theme_corner" })
@@ -588,6 +630,23 @@ P_Set:MultiButton({
             N("Theme applied", "Custom theme set", "#50C864")
         end },
         { Text="Save as config", Callback=function()
+                    local n = "theme_"..tostring(os.time())
+            Cfg:addcfg(n)
+            Cfg:updcfg(n)
+            RefreshDrop()
+            N("Saved", '"'..n..'"', "#50C864")
+        end },
+    },
+})
+ 
+P_Set:Divider()
+P_Set:Section("Theme presets")
+ 
+P_Set:MultiButton({
+    Buttons = {
+        { Text="Pink",   Callback=function() Library:SetTheme({Accent="#FF007F",TabImage="#FF007F",TabStroke="#4B0026"}) end },
+        { Text="Blue",   Color="#0088FF", Callback=function() Library:SetTheme({Accent="#0088FF",TabImage="#0088FF",TabStroke="#003366"}) end },
+        { Text="Green",  Color="#00CC66", Callback=function() Library:SetTheme({Accent="#00CC66",TabImage="#00CC66",TabStroke="#004D26"}) end },
             local n = "theme_"..tostring(os.time())
             Cfg:addcfg(n)
             Cfg:updcfg(n)
@@ -598,20 +657,8 @@ P_Set:MultiButton({
 })
 
 P_Set:Divider()
-P_Set:Section("Theme presets")
-
-P_Set:MultiButton({
-    Buttons = {
-        { Text="Pink",   Callback=function() Library:SetTheme({Accent="#FF007F",TabImage="#FF007F",TabStroke="#4B0026"}) end },
-        { Text="Blue",   Color="#0088FF", Callback=function() Library:SetTheme({Accent="#0088FF",TabImage="#0088FF",TabStroke="#003366"}) end },
-        { Text="Green",  Color="#00CC66", Callback=function() Library:SetTheme({Accent="#00CC66",TabImage="#00CC66",TabStroke="#004D26"}) end },
-        { Text="Purple", Color="#9955FF", Callback=function() Library:SetTheme({Accent="#9955FF",TabImage="#9955FF",TabStroke="#330066"}) end },
-    },
-})
-
-P_Set:Divider()
 P_Set:Section("Notification tests")
-
+ 
 P_Set:MultiButton({
     Buttons = {
         { Text="Info",    Color="#6495ED", Callback=function() N("Info",    "Something to note",     "#6495ED",4) end },
@@ -631,5 +678,5 @@ P_Set:MultiButton({
         end },
     },
 })
-
+ 
 N("<b>Skid Playground</b>", Exec.name.."  ·  RCtrl to toggle", "#FF007F", 5)
