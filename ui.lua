@@ -58,9 +58,18 @@ end
 local function list(o, gap, dir)
     return mk("UIListLayout", { Padding = UDim.new(0, gap or 0), SortOrder = Enum.SortOrder.LayoutOrder, FillDirection = dir or Enum.FillDirection.Vertical, Parent = o })
 end
+local function col3(c, default)
+    if c == nil then return default end
+    if type(c) == "string" then
+        local ok, r = pcall(Color3.fromHex, c)
+        return ok and r or default
+    end
+    return c
+end
+
 local function label(parent, text, size, col, font, xa)
     return mk("TextLabel", {
-        BackgroundTransparency = 1, Text = text, TextSize = size or 12, TextColor3 = col or T.Text,
+        BackgroundTransparency = 1, Text = tostring(text), TextSize = size or 12, TextColor3 = col3(col, T.Text),
         Font = font or FM, TextXAlignment = xa or Enum.TextXAlignment.Left, Parent = parent,
     })
 end
@@ -483,7 +492,7 @@ function Lib:CreateWindow(opts)
             -- ----- Button -----
             local function styleButton(b, col)
                 b.BackgroundColor3 = T.Row
-                b.TextColor3 = col or T.Text
+                b.TextColor3 = col3(col, T.Text)
                 b.MouseEnter:Connect(function() tw(b, 0.12, { BackgroundColor3 = T.RowHi }) end)
                 b.MouseLeave:Connect(function() tw(b, 0.12, { BackgroundColor3 = T.Row }) end)
             end
@@ -913,12 +922,22 @@ function Lib:CreateWindow(opts)
 end
 
 -- ===== halaman Home standar =====
-function Window:BuildHome(info)
+function Window:BuildHome(info, existing)
     info = info or {}
     local W = self
-    local page = W:AddPage({ Name = "Home", Icon = "⌂" })
+    local page = existing or W:AddPage({ Name = "Home", Icon = "⌂" })
+
+    -- tiap bagian dibungkus pcall: satu bagian error tidak mematikan sisanya (error ditampilkan)
+    local function try(name, fn)
+        local ok, err = pcall(fn)
+        if not ok then
+            warn("[KatssinnnUI] Home/" .. name .. ": " .. tostring(err))
+            W:Notify({ Title = "Home: " .. name, Desc = tostring(err), Color = "#DC3232", Duration = 10 })
+        end
+    end
 
     ----- Welcome -----
+    try('Welcome', function()
     local c1 = page:AddCard({ Title = "Welcome", Icon = "★", Column = 1 })
     local wf = c1:Custom(86)
     local av = mk("ImageLabel", {
@@ -938,8 +957,10 @@ function Window:BuildHome(info)
         nm.Text = hidden and "Hidden" or LP.DisplayName
         un.Text = hidden and "@hidden" or ("@" .. LP.Name)
     end)
+    end)
 
     ----- Performance -----
+    try('Performance', function()
     local c2 = page:AddCard({ Title = "Performance", Icon = "◔", Column = 1 })
     local pf = c2:Custom(150)
     local N = 40
@@ -1009,8 +1030,10 @@ function Window:BuildHome(info)
             end)
         end
     end)
+    end)
 
     ----- Game -----
+    try('Game', function()
     local c3 = page:AddCard({ Title = "Game", Icon = "▶", Column = 1 })
     local gf = c3:Custom(54)
     local gname, gcreator = info.Game or "Game", ""
@@ -1065,8 +1088,10 @@ function Window:BuildHome(info)
         end },
     } })
     c3:Label({ Text = "Job " .. string.sub(game.JobId, 1, 8) .. "…  ·  Place " .. game.PlaceId, Size = 10 })
+    end)
 
     ----- Menu -----
+    try('Menu', function()
     local c4 = page:AddCard({ Title = "Menu", Icon = "▭", Column = 2 })
     c4:Keybind({ Title = "Toggle UI", Value = W.ToggleKey, id = "ui_key", OnChanged = function(k) W.ToggleKey = k end })
     c4:Slider({ Title = "UI Scale", Min = 50, Max = 150, Value = 100, Rounding = 0, Suffix = "%", id = "ui_scale",
@@ -1081,8 +1106,10 @@ function Window:BuildHome(info)
     end)
     c4:Toggle({ Title = "Anti AFK", Value = false, id = "anti_afk", Callback = function(v) afkOn = v end })
     c4:Button({ Text = "Unload", Color = "#E5484D", Callback = function() W:Destroy() end })
+    end)
 
     ----- Configs -----
+    try('Configs', function()
     local c5 = page:AddCard({ Title = "Configs", Icon = "▤", Column = 2 })
     local status = c5:Label({ Text = "-" })
     local cname = c5:Input({ Title = "Config name", Placeholder = "Type config name here..." })
@@ -1135,12 +1162,15 @@ function Window:BuildHome(info)
         refresh()
     end })
     refresh()
+    end)
 
     ----- Theme -----
+    try('Theme', function()
     local c6 = page:AddCard({ Title = "Theme", Icon = "◐", Column = 2 })
     c6:Dropdown({ Title = "Preset", List = PRESET_LIST, Value = "Pink", id = "theme_preset", Callback = function(v)
         if v then W:SetAccent(v) end
     end })
+    end)
 
     return page
 end
