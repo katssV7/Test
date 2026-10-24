@@ -18,7 +18,7 @@ local Window = Library:Window({
     Icon             = "rbxassetid://104055321996495",
     ToggleIcon       = "rbxassetid://104055321996495",
     ToggleBtnCorner  = UDim.new(1, 0),
-    FolderName       = "KatssinnnHub",
+    FolderName       = "SkidPlayground",
     AutoLoad         = function(name, data)
         N("Restored", name, "#50C864", 3)
     end,
@@ -165,8 +165,7 @@ local GEAR_DELAY  = 1
 local LastClaimCount = 0
 
 local On = { claim = false, feed = false, sell = false }
-local DROP_DELAY = 0.5
-local runId = { buy = 0, egg = 0, gear = 0, drop = 0 }
+local runId = { buy = 0, egg = 0, gear = 0 }
 
 local function Loop(key, enabled, getDelay, fn)
     runId[key] += 1
@@ -223,72 +222,43 @@ local function SellAll()
     if r then r:FireServer() end
 end
 
--- ===== DROP FEED (pickup) =====
--- Item hasil drop pohon punya nama UUID acak di workspace. Dikumpulkan otomatis
--- (jaring di Ponds.*.Buildings dikecualikan), lalu di-claim lewat pickup.claimPickup.
-local UUID_PAT = "^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$"
-local Pickups = {}       -- [Instance] = uuid
-local PickupWatch = false
-local LastDropCount = 0
+-- ===== DROP FEED (teleport) =====
+-- Klik sekali: teleport ke titik 1 -> 2 -> 3, lalu balik ke posisi awal.
+local DROP_POINTS = {
+    Vector3.new(-10, 12, -1),
+    Vector3.new(0, 13, -8),
+    Vector3.new(2, 10, 6),
+}
+local DROP_WAIT = 1
+local DropBusy = false
 
-local function IsPickup(inst)
-    if not inst.Name:match(UUID_PAT) then return false end
-    local p = inst.Parent
-    if p and p.Name == "Buildings" then return false end
-    local ch = LP.Character
-    if ch and inst:IsDescendantOf(ch) then return false end
+local function GetHRP()
+    local c = LP.Character
+    return c and c:FindFirstChild("HumanoidRootPart")
+end
+
+local function CollectDrops()
+    if DropBusy then return false end
+    local hrp = GetHRP()
+    if not hrp then return false end
+    DropBusy = true
+    local back = hrp.CFrame
+    pcall(function()
+        for _, pos in ipairs(DROP_POINTS) do
+            local h = GetHRP()
+            if not h then return end
+            h.CFrame = CFrame.new(pos)
+            h.AssemblyLinearVelocity = Vector3.zero
+            task.wait(DROP_WAIT)
+        end
+    end)
+    local h = GetHRP()
+    if h then
+        h.CFrame = back
+        h.AssemblyLinearVelocity = Vector3.zero
+    end
+    DropBusy = false
     return true
-end
-
-local function StartPickupWatch()
-    if PickupWatch then return end
-    PickupWatch = true
-    workspace.DescendantAdded:Connect(function(d)
-        if IsPickup(d) then Pickups[d] = d.Name end
-    end)
-    workspace.DescendantRemoving:Connect(function(d) Pickups[d] = nil end)
-    task.spawn(function()
-        local n = 0
-        for _, d in ipairs(workspace:GetDescendants()) do
-            if IsPickup(d) then Pickups[d] = d.Name end
-            n += 1
-            if n % 2000 == 0 then task.wait() end
-        end
-    end)
-end
-
-local function ClaimDrops()
-    StartPickupWatch()
-    local r = GetRemote("pickup.claimPickup")
-    if not r then return 0 end
-    local n = 0
-    for inst, id in pairs(Pickups) do
-        if inst.Parent then
-            n += 1
-            task.spawn(function() pcall(r.FireServer, r, id) end)
-        else
-            Pickups[inst] = nil
-        end
-    end
-    LastDropCount = n
-    return n
-end
-
--- ringkasan pickup yang terdeteksi per parent (buat cek lokasinya)
-local function ScanDrops()
-    StartPickupWatch()
-    task.wait(0.5)
-    local byParent, total = {}, 0
-    for inst in pairs(Pickups) do
-        if inst.Parent then
-            total += 1
-            local nm = inst.Parent.Name
-            byParent[nm] = (byParent[nm] or 0) + 1
-        end
-    end
-    local parts = {}
-    for nm, c in pairs(byParent) do parts[#parts + 1] = nm .. " x" .. c end
-    return total, table.concat(parts, ", ")
 end
 
 -- ===== REDEEM =====
@@ -465,39 +435,28 @@ Group("Feed settings", function(add)
     }))
 end)
 
-local tog_drop = P_Main:Toggle({
-    Title        = "Auto Claim Drop Feed",
-    Desc         = "Claim item drop dari pohon (pickup UUID acak)",
-    Value        = false,
-    id           = "auto_claim_drop",
-    CornerRadius = UDim.new(1, 0),
-    Callback     = function(v)
-        if v then StartPickupWatch() end
-        Loop("drop", v, function() return DROP_DELAY end, function()
-            ClaimDrops()
+P_Main:Button({
+    Title    = "Collect Drop Feed",
+    Desc     = "Klik: teleport ke titik 1, 2, 3 lalu kembali ke posisi awal",
+    Text     = "Collect",
+    Callback = function()
+        task.spawn(function()
+            if DropBusy then N("Drop Feed", "Masih berjalan...", "#FFA500"); return end
+            N("Drop Feed", "Teleport 1 > 2 > 3...", "#6495ED")
+            local ok = CollectDrops()
+            N("Drop Feed", ok and "Selesai, kembali ke posisi awal" or "Karakter tidak ditemukan", ok and "#50C864" or "#DC3232")
         end)
-        N("Auto Claim Drop Feed", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
     end,
 })
 
 Group("Drop settings", function(add)
     add(P_Main:Slider({
-        Title    = "Drop claim delay",
-        Min      = 0.1, Max = 5, Value = 0.5,
+        Title    = "Jeda tiap titik",
+        Desc     = "Lama berhenti di setiap titik teleport (detik)",
+        Min      = 0.2, Max = 5, Value = 1,
         Rounding = 1, Suffix = "s",
-        id       = "drop_delay",
-        Callback = function(v) DROP_DELAY = v end,
-    }))
-    add(P_Main:Button({
-        Title    = "Scan drop",
-        Desc     = "Cek jumlah pickup yang terdeteksi dan lokasinya",
-        Text     = "Scan",
-        Callback = function()
-            task.spawn(function()
-                local total, info = ScanDrops()
-                N("Scan drop", total .. " pickup" .. (total > 0 and (" | " .. info) or ""), total > 0 and "#50C864" or "#FFA500", 5)
-            end)
-        end,
+        id       = "drop_wait",
+        Callback = function(v) DROP_WAIT = v end,
     }))
 end)
 
@@ -672,7 +631,7 @@ P_Main:MultiButton({
             N("Claim", ClaimAll() .. " jaring", "#50C864")
         end },
         { Text="Feed", Callback=function() pcall(FeedAll) end },
-        { Text="Drop", Callback=function() N("Claim Drop", ClaimDrops() .. " pickup", "#50C864") end },
+        { Text="Drop", Callback=function() task.spawn(CollectDrops) end },
         { Text="Sell", Color="#50C864", Callback=function() pcall(SellAll) end },
     },
 })
@@ -689,11 +648,11 @@ P_Main:MultiButton({
     Buttons = {
         { Text="All ON",  Color="#50C864", Callback=function()
             tog_claim:SetValue(true); tog_feed:SetValue(true); tog_sell:SetValue(true)
-            tog_buy:SetValue(true); tog_egg:SetValue(true); tog_gear:SetValue(true); tog_drop:SetValue(true)
+            tog_buy:SetValue(true); tog_egg:SetValue(true); tog_gear:SetValue(true)
         end },
         { Text="All OFF", Color="#DC3232", Callback=function()
             tog_claim:SetValue(false); tog_feed:SetValue(false); tog_sell:SetValue(false)
-            tog_buy:SetValue(false); tog_egg:SetValue(false); tog_gear:SetValue(false); tog_drop:SetValue(false)
+            tog_buy:SetValue(false); tog_egg:SetValue(false); tog_gear:SetValue(false)
         end },
     },
 })
@@ -1200,4 +1159,4 @@ P_Set:MultiButton({
     },
 })
 
-N("<b>KatssinnnHub</b>", Exec.name.."  ·  RCtrl to toggle", "#FF007F", 5)
+N("<b>Skid Playground</b>", Exec.name.."  ·  RCtrl to toggle", "#FF007F", 5)
