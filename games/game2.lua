@@ -165,7 +165,8 @@ local GEAR_DELAY  = 1
 local LastClaimCount = 0
 
 local On = { claim = false, feed = false, sell = false }
-local runId = { buy = 0, egg = 0, gear = 0 }
+local DROP_DELAY = 0.5
+local runId = { buy = 0, egg = 0, gear = 0, drop = 0 }
 
 local function Loop(key, enabled, getDelay, fn)
     runId[key] += 1
@@ -220,6 +221,87 @@ end
 local function SellAll()
     local r = GetRemote("sellFish.sellAllFish")
     if r then r:FireServer() end
+end
+
+-- ===== DROP FEED (pickup) =====
+-- Item hasil drop pohon punya nama UUID acak di workspace. Dikumpulkan otomatis
+-- (jaring di Ponds.*.Buildings dikecualikan), lalu di-claim lewat pickup.claimPickup.
+local UUID_PAT = "^%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x$"
+local Pickups = {}       -- [Instance] = uuid
+local PickupWatch = false
+local LastDropCount = 0
+
+local function IsPickup(inst)
+    if not inst.Name:match(UUID_PAT) then return false end
+    local p = inst.Parent
+    if p and p.Name == "Buildings" then return false end
+    local ch = LP.Character
+    if ch and inst:IsDescendantOf(ch) then return false end
+    return true
+end
+
+local function StartPickupWatch()
+    if PickupWatch then return end
+    PickupWatch = true
+    workspace.DescendantAdded:Connect(function(d)
+        if IsPickup(d) then Pickups[d] = d.Name end
+    end)
+    workspace.DescendantRemoving:Connect(function(d) Pickups[d] = nil end)
+    task.spawn(function()
+        local n = 0
+        for _, d in ipairs(workspace:GetDescendants()) do
+            if IsPickup(d) then Pickups[d] = d.Name end
+            n += 1
+            if n % 2000 == 0 then task.wait() end
+        end
+    end)
+end
+
+local function ClaimDrops()
+    StartPickupWatch()
+    local r = GetRemote("pickup.claimPickup")
+    if not r then return 0 end
+    local n = 0
+    for inst, id in pairs(Pickups) do
+        if inst.Parent then
+            n += 1
+            task.spawn(function() pcall(r.FireServer, r, id) end)
+        else
+            Pickups[inst] = nil
+        end
+    end
+    LastDropCount = n
+    return n
+end
+
+-- ringkasan pickup yang terdeteksi per parent (buat cek lokasinya)
+local function ScanDrops()
+    StartPickupWatch()
+    task.wait(0.5)
+    local byParent, total = {}, 0
+    for inst in pairs(Pickups) do
+        if inst.Parent then
+            total += 1
+            local nm = inst.Parent.Name
+            byParent[nm] = (byParent[nm] or 0) + 1
+        end
+    end
+    local parts = {}
+    for nm, c in pairs(byParent) do parts[#parts + 1] = nm .. " x" .. c end
+    return total, table.concat(parts, ", ")
+end
+
+-- ===== REDEEM =====
+local CODES = { "WILCO", "KIRA", "67", "50K" }
+
+local function RedeemAll()
+    local r = GetRemote("store.redeemCode")
+    if not r then return 0 end
+    for _, code in ipairs(CODES) do
+        pcall(r.FireServer, r, code)
+        task.wait(0.3)
+    end
+    return #CODES
 end
 
 -- dropdown dibuat di bawah; dibaca langsung saat beli supaya selalu sinkron
@@ -383,6 +465,42 @@ Group("Feed settings", function(add)
     }))
 end)
 
+local tog_drop = P_Main:Toggle({
+    Title        = "Auto Claim Drop Feed",
+    Desc         = "Claim item drop dari pohon (pickup UUID acak)",
+    Value        = false,
+    id           = "auto_claim_drop",
+    CornerRadius = UDim.new(1, 0),
+    Callback     = function(v)
+        if v then StartPickupWatch() end
+        Loop("drop", v, function() return DROP_DELAY end, function()
+            ClaimDrops()
+        end)
+        N("Auto Claim Drop Feed", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
+    end,
+})
+
+Group("Drop settings", function(add)
+    add(P_Main:Slider({
+        Title    = "Drop claim delay",
+        Min      = 0.1, Max = 5, Value = 0.5,
+        Rounding = 1, Suffix = "s",
+        id       = "drop_delay",
+        Callback = function(v) DROP_DELAY = v end,
+    }))
+    add(P_Main:Button({
+        Title    = "Scan drop",
+        Desc     = "Cek jumlah pickup yang terdeteksi dan lokasinya",
+        Text     = "Scan",
+        Callback = function()
+            task.spawn(function()
+                local total, info = ScanDrops()
+                N("Scan drop", total .. " pickup" .. (total > 0 and (" | " .. info) or ""), total > 0 and "#50C864" or "#FFA500", 5)
+            end)
+        end,
+    }))
+end)
+
 -- ===== SELL =====
 P_Main:Divider()
 P_Main:Section("Sell")
@@ -528,6 +646,22 @@ Group("Gear settings", function(add)
     }))
 end)
 
+-- ===== REDEEM =====
+P_Main:Divider()
+P_Main:Section("Redeem")
+
+P_Main:Button({
+    Title    = "Redeem Code",
+    Desc     = "Sekali klik: semua kode di-redeem (" .. table.concat(CODES, ", ") .. ")",
+    Text     = "Redeem",
+    Callback = function()
+        task.spawn(function()
+            local n = RedeemAll()
+            N("Redeem Code", n .. " kode dikirim", "#50C864")
+        end)
+    end,
+})
+
 -- ===== MANUAL =====
 P_Main:Divider()
 P_Main:Section("Manual")
@@ -538,6 +672,7 @@ P_Main:MultiButton({
             N("Claim", ClaimAll() .. " jaring", "#50C864")
         end },
         { Text="Feed", Callback=function() pcall(FeedAll) end },
+        { Text="Drop", Callback=function() N("Claim Drop", ClaimDrops() .. " pickup", "#50C864") end },
         { Text="Sell", Color="#50C864", Callback=function() pcall(SellAll) end },
     },
 })
@@ -554,11 +689,11 @@ P_Main:MultiButton({
     Buttons = {
         { Text="All ON",  Color="#50C864", Callback=function()
             tog_claim:SetValue(true); tog_feed:SetValue(true); tog_sell:SetValue(true)
-            tog_buy:SetValue(true); tog_egg:SetValue(true); tog_gear:SetValue(true)
+            tog_buy:SetValue(true); tog_egg:SetValue(true); tog_gear:SetValue(true); tog_drop:SetValue(true)
         end },
         { Text="All OFF", Color="#DC3232", Callback=function()
             tog_claim:SetValue(false); tog_feed:SetValue(false); tog_sell:SetValue(false)
-            tog_buy:SetValue(false); tog_egg:SetValue(false); tog_gear:SetValue(false)
+            tog_buy:SetValue(false); tog_egg:SetValue(false); tog_gear:SetValue(false); tog_drop:SetValue(false)
         end },
     },
 })
