@@ -5,6 +5,7 @@ local BASE = "https://raw.githubusercontent.com/katssV7/Test/refs/heads/main/"
 local Games = {
     [110730550789828] = "example.lua",        -- GANTI 0000000000 dengan PlaceId game pertama
     [91296119701853] = "games/game2.lua",    -- GANTI 1111111111 dengan PlaceId game kedua (Fishing)
+    [79389059854988] = "games/game3.lua",
 }
 
 local path = Games[game.PlaceId]
