@@ -20,7 +20,7 @@ local Players = game:GetService("Players")
 local LP      = Players.LocalPlayer
 
 -- ===== LOOP (bisa dibatalkan) =====
-local runId = { fish = 0 }
+local runId = { fish = 0, collect = 0 }
 local function Loop(key, enabled, getDelay, fn)
     runId[key] += 1
     if not enabled then return end
@@ -34,12 +34,15 @@ local function Loop(key, enabled, getDelay, fn)
     end)
 end
 
--- ===== KONSTANTA (tanpa pengaturan, tinggal aktifkan) =====
+-- ===== PENGATURAN (diisi slider) =====
 local POWER      = 99      -- kekuatan lemparan
-local HOLD_TIME  = 1.0     -- tahan penuh supaya lemparan selalu valid
-local CATCH_WINDOW = 5.0   -- detik: terus kirim tanda + catch sampai ikan tertarik
-local CATCH_STEP = 0.2     -- jeda antar percobaan catch
-local CYCLE_WAIT = 0.4     -- jeda antar siklus
+local HOLD_TIME  = 0.35    -- lama menahan (ancang-ancang) sebelum dilepas
+local BITE_WAIT  = 1.0     -- tunggu sampai ikan nyangkut (tanda di atas kepala)
+local CATCH_WAIT = 0.15    -- jeda setelah tanda muncul sebelum catch
+local CYCLE_WAIT = 0.5     -- jeda antar siklus
+local COLLECT_EVERY = 3    -- detik, auto ambil ke tas
+local SHOW_MARK  = true    -- kirim tanda "!" di atas kepala
+local COLLECT_AFTER = true -- ambil ke tas setiap selesai catch
 local DIRECTION  = "Menghadap karakter"
 
 local Stats = { casts = 0, catches = 0, bag = 0, status = "idle" }
@@ -136,19 +139,14 @@ local function FishOnce(id)
     Stats.status = "lempar"
     cast:FireServer(false, POWER, Dir())                    -- lepas -> lempar
     Stats.casts += 1
-
-    -- ikan nyangkut di waktu acak: terus kirim tanda "!" + catch sampai tertangkap / waktu habis
-    Stats.status = "menunggu ikan"
-    local el = 0
-    while el < CATCH_WINDOW do
-        if id and runId.fish ~= id then return false end
-        BiteMark()
-        mini:FireServer(true)
-        el += task.wait(CATCH_STEP)
-    end
+    if id and not Sleep(BITE_WAIT, id) then return false end
+    Stats.status = "ikan nyangkut"
+    if SHOW_MARK then BiteMark() end                        -- tanda di atas kepala
+    if id and not Sleep(CATCH_WAIT, id) then return false end
+    mini:FireServer(true)                                   -- catch langsung
     Stats.catches += 1
     Stats.status = "catch"
-    CollectAll()                                            -- masuk tas & bersihkan
+    if COLLECT_AFTER then CollectAll() end                  -- masuk tas & bersihkan
     return true
 end
 
@@ -160,8 +158,9 @@ local function OnOff(name, v)
     N(name, v and "ON" or "OFF", v and "#50C864" or "#DC3232")
 end
 
+-- ---------- kolom 1 ----------
 local cFish = Main:AddCard({ Title = "Instant Fishing", Icon = "◆", Column = 1 })
-cFish:Toggle({
+local tog_fish = cFish:Toggle({
     Title = "Auto Instant Fishing", id = "auto_fish",
     Callback = function(v)
         Loop("fish", v, function() return CYCLE_WAIT end, FishOnce)
@@ -169,8 +168,46 @@ cFish:Toggle({
         OnOff("Auto Instant Fishing", v)
     end,
 })
+cFish:Slider({ Title = "Cast Power", Min = 1, Max = 100, Value = 99, id = "fish_power", Callback = function(v) POWER = v end })
+cFish:Slider({ Title = "Hold Time (s)", Min = 0, Max = 2, Value = 0.35, Rounding = 2, id = "fish_hold", Callback = function(v) HOLD_TIME = v end })
+cFish:Slider({ Title = "Bite Wait (s)", Min = 0, Max = 5, Value = 1.0, Rounding = 2, id = "fish_bite", Callback = function(v) BITE_WAIT = v end })
+cFish:Slider({ Title = "Catch Delay (s)", Min = 0, Max = 2, Value = 0.15, Rounding = 2, id = "fish_catch", Callback = function(v) CATCH_WAIT = v end })
+cFish:Slider({ Title = "Cycle Delay (s)", Min = 0, Max = 5, Value = 0.5, Rounding = 2, id = "fish_cycle", Callback = function(v) CYCLE_WAIT = v end })
 
-local cStat = Main:AddCard({ Title = "Status", Icon = "◔", Column = 1 })
+local cOpt = Main:AddCard({ Title = "Options", Icon = "★", Column = 1 })
+cOpt:Dropdown({ Title = "Cast Direction", List = { "Menghadap karakter", "Arah kamera" }, Value = "Menghadap karakter", id = "fish_dir",
+    Callback = function(v) DIRECTION = v or "Menghadap karakter" end })
+cOpt:Toggle({ Title = "Send Bite Mark (!)", Value = true, id = "fish_mark", Callback = function(v) SHOW_MARK = v end })
+cOpt:Toggle({ Title = "Collect After Each Catch", Value = true, id = "fish_collect_after", Callback = function(v) COLLECT_AFTER = v end })
+
+-- ---------- kolom 2 ----------
+local cBag = Main:AddCard({ Title = "Bag", Icon = "▣", Column = 2 })
+local tog_collect = cBag:Toggle({
+    Title = "Auto Collect to Bag", id = "auto_collect",
+    Callback = function(v)
+        Loop("collect", v, function() return COLLECT_EVERY end, CollectAll)
+        OnOff("Auto Collect to Bag", v)
+    end,
+})
+cBag:Slider({ Title = "Collect Interval (s)", Min = 1, Max = 60, Value = 3, id = "collect_delay", Callback = function(v) COLLECT_EVERY = v end })
+cBag:Button({ Text = "Collect Now", Callback = function()
+    local ok = CollectAll()
+    N("Bag", ok and "Semua masuk tas" or "Gagal (remote tidak ditemukan)", ok and "#50C864" or "#DC3232")
+end })
+
+local cCtl = Main:AddCard({ Title = "Controls", Icon = "◉", Column = 2 })
+cCtl:Buttons({ Buttons = {
+    { Text = "All ON",  Callback = function() tog_fish:Set(true); tog_collect:Set(true) end },
+    { Text = "All OFF", Callback = function() tog_fish:Set(false); tog_collect:Set(false) end },
+} })
+cCtl:Button({ Text = "Cast Once", Callback = function()
+    task.spawn(function()
+        local ok = pcall(FishOnce, nil)
+        N("Cast", ok and "Satu siklus dikirim" or "Gagal", ok and "#50C864" or "#DC3232")
+    end)
+end })
+
+local cStat = Main:AddCard({ Title = "Status", Icon = "◔", Column = 2 })
 local stLbl = cStat:Label({ Text = "-" })
 task.spawn(function()
     while W.Alive do
