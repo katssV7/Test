@@ -6,7 +6,6 @@ local UI = loadstring(game:HttpGet(BASE .. "ui.lua"))()
 local W = UI:CreateWindow({
     Title     = "KatssinnnHub",
     Version   = "v1.0",
-    Icon      = "rbxassetid://104055321996495",
     Game      = "My Anime Mine",
     Folder    = "KatssinnnHub/MyAnimeMine",
     ToggleKey = Enum.KeyCode.RightControl,
@@ -302,15 +301,15 @@ end
 
 -- ===== UI =====
 -- urutan sidebar: Home lalu Main. Isi Home dibangun TERAKHIR supaya error di Home tidak menghentikan fitur Main.
-local HomePage = W:AddPage({ Name = "Home", Icon = "⌂" })
-local Main = W:AddPage({ Name = "Main", Icon = "▣" })
+local HomePage = W:AddPage({ Name = "Home", Icon = "house" })
+local Main = W:AddPage({ Name = "Main", Icon = "gamepad-2" })
 
 local function OnOff(name, v)
     N(name, v and "ON" or "OFF", v and "#50C864" or "#DC3232")
 end
 
 -- ---------- kolom 1 ----------
-local cMine = Main:AddCard({ Title = "Mine", Icon = "◆", Column = 1 })
+local cMine = Main:AddCard({ Title = "Mine", Icon = "pickaxe", Column = 1 })
 
 local tog_mine = cMine:Toggle({
     Title = "Auto Mine", id = "auto_mine",
@@ -354,7 +353,7 @@ cMine:Button({
     end,
 })
 
-local cUp = Main:AddCard({ Title = "Upgrade", Icon = "▲", Column = 1 })
+local cUp = Main:AddCard({ Title = "Upgrade", Icon = "arrow-up", Column = 1 })
 ddSlots = cUp:Dropdown({ Title = "Slot anime (M1 = urutan 1)", List = SLOTS, Value = { "M1" }, id = "up_slots" })
 ddStats = cUp:Dropdown({ Title = "Stat (kosong = semua)", List = STATS, Value = { "Damage", "Speed", "MineSpeed" }, id = "up_stats" })
 local tog_upsel = cUp:Toggle({
@@ -377,7 +376,7 @@ cUp:Slider({
     Callback = function(v) UP_DELAY = v end,
 })
 
-local cEq = Main:AddCard({ Title = "Equip", Icon = "★", Column = 1 })
+local cEq = Main:AddCard({ Title = "Equip", Icon = "star", Column = 1 })
 local tog_equip = cEq:Toggle({
     Title = "Auto Equip Best", id = "auto_equip",
     Callback = function(v)
@@ -391,7 +390,7 @@ cEq:Slider({
 })
 
 -- ---------- kolom 2 ----------
-local cChest = Main:AddCard({ Title = "Chest", Icon = "▣", Column = 2 })
+local cChest = Main:AddCard({ Title = "Chest", Icon = "package", Column = 2 })
 local tog_chest = cChest:Toggle({
     Title = "Auto Take Chest", id = "auto_chest",
     Callback = function(v)
@@ -405,7 +404,7 @@ cChest:Slider({
 })
 cChest:Button({ Text = "Take Chest (1x klik)", Callback = function() TakeChest(); N("Take Chest", "Dikirim", "#50C864") end })
 
-local cSell = Main:AddCard({ Title = "Sell", Icon = "$", Column = 2 })
+local cSell = Main:AddCard({ Title = "Sell", Icon = "coins", Column = 2 })
 ddSell = cSell:Dropdown({ Title = "Ore (satuan)", List = ORES, Value = {}, id = "sell_select" })
 local tog_sellsel = cSell:Toggle({
     Title = "Auto Sell Selected", id = "auto_sell_sel",
@@ -428,7 +427,7 @@ cSell:Slider({
 })
 cSell:Button({ Text = "Sell All (1x klik)", Callback = function() SellAllOres(); N("Sell All", "Dikirim", "#50C864") end })
 
-local cUnlock = Main:AddCard({ Title = "Unlock Slot", Icon = "●", Column = 2 })
+local cUnlock = Main:AddCard({ Title = "Unlock Slot", Icon = "lock-open", Column = 2 })
 local tog_unlock = cUnlock:Toggle({
     Title = "Auto Unlock Slot", id = "auto_unlock",
     Callback = function(v)
@@ -452,7 +451,7 @@ cUnlock:Button({
     end,
 })
 
-local cRedeem = Main:AddCard({ Title = "Redeem", Icon = "◇", Column = 2 })
+local cRedeem = Main:AddCard({ Title = "Redeem", Icon = "gift", Column = 2 })
 cRedeem:Label({ Text = table.concat(CODES, ", ") })
 cRedeem:Button({
     Text = "Redeem Code",
@@ -465,7 +464,7 @@ cRedeem:Button({
 })
 
 local allToggles = { tog_mine, tog_equip, tog_upsel, tog_upall, tog_chest, tog_sellsel, tog_sellall, tog_unlock }
-local cCtl = Main:AddCard({ Title = "Controls", Icon = "◉", Column = 2 })
+local cCtl = Main:AddCard({ Title = "Controls", Icon = "sliders-horizontal", Column = 2 })
 cCtl:Buttons({ Buttons = {
     { Text = "All ON",  Callback = function() for _, t in ipairs(allToggles) do t:Set(true) end end },
     { Text = "All OFF", Callback = function() for _, t in ipairs(allToggles) do t:Set(false) end end },
@@ -476,7 +475,7 @@ cCtl:Buttons({ Buttons = {
 } })
 
 -- status ore
-local cStat = Main:AddCard({ Title = "Status", Icon = "◔", Column = 1 })
+local cStat = Main:AddCard({ Title = "Status", Icon = "gauge", Column = 1 })
 local stLbl = cStat:Label({ Text = "-" })
 task.spawn(function()
     while W.Alive do
