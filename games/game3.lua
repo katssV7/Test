@@ -509,4 +509,4 @@ end
 
 W:SelectPage("Main")
 W:Ready()      -- jalankan nilai awal + autoload config (Callback ikut jalan)
-N("KatssinnnHub", "My Anime Mine dimuat  ·  RCtrl untuk buka/tutup", "#50C864", 4)
+W:OnBooted(function() N("KatssinnnHub", "My Anime Mine dimuat  ·  RCtrl untuk buka/tutup", "#50C864", 4) end)   -- notifikasi muncul setelah intro selesai
