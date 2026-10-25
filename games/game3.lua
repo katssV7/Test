@@ -1,5 +1,5 @@
 -- KatssinnnHub | Game 3 (My Anime Mine)
--- UI baru: sidebar Home / Main, kartu dua kolom (library: ui.lua).
+-- UI baru: sidebar Home / Main / Player / Settings, kartu dua kolom (library: ui.lua).
 local BASE = "https://raw.githubusercontent.com/katssV7/Test/refs/heads/main/"
 local UI = loadstring(game:HttpGet(BASE .. "ui.lua"))()
 
@@ -303,6 +303,7 @@ end
 -- urutan sidebar: Home lalu Main. Isi Home dibangun TERAKHIR supaya error di Home tidak menghentikan fitur Main.
 local HomePage = W:AddPage({ Name = "Home", Icon = "house" })
 local Main = W:AddPage({ Name = "Main", Icon = "gamepad-2" })
+local PlayerPage = W:AddPage({ Name = "Player", Icon = "user" })
 
 local function OnOff(name, v)
     N(name, v and "ON" or "OFF", v and "#50C864" or "#DC3232")
@@ -490,6 +491,13 @@ end)
 W:OnUnload(function()
     for k in pairs(runId) do runId[k] += 1 end
 end)
+
+-- isi menu Player (Movement / Fly / Client) ada di ui.lua -> W:BuildPlayer
+local okPl, errPl = pcall(function() W:BuildPlayer(PlayerPage) end)
+if not okPl then
+    warn("[KatssinnnHub] Player error: " .. tostring(errPl))
+    N("Player error", tostring(errPl), "#DC3232", 10)
+end
 
 local okHome, errHome = pcall(function()
     W:BuildHome({ Game = "My Anime Mine", Version = "v1.0" }, HomePage)
