@@ -1,88 +1,119 @@
--- KatssinnnHub | Game 5 (Deagle Arena)
--- Aimbot (kekuatan bisa diatur), Triggerbot, ESP, Hitbox, FOV changer.
--- UI / library sama dengan game 3 (ui.lua).
+-- KatssinnnHub | Game 5 (Deagle Map)
+-- Sidebar: Home / Main / Player / Settings (library: ui.lua)
+-- Main: Aimbot + FOV, ESP (tim & musuh), Extras (Triggerbot, Hitbox)
 local BASE = "https://raw.githubusercontent.com/katssV7/Test/refs/heads/main/"
 local UI = loadstring(game:HttpGet(BASE .. "ui.lua"))()
 
 local W = UI:CreateWindow({
     Title     = "KatssinnnHub",
     Version   = "v1.0",
-    Game      = "Deagle Arena",
-    Folder    = "KatssinnnHub/DeagleArena",
+    Game      = "Deagle Map",
+    Folder    = "KatssinnnHub/DeagleMap",
     ToggleKey = Enum.KeyCode.RightControl,
 })
 
 local function N(title, desc, color, dur)
     W:Notify({ Title = title, Desc = desc or "", Color = color or "#6495ED", Duration = dur or 3 })
 end
+local function OnOff(name, v)
+    N(name, v and "ON" or "OFF", v and "#50C864" or "#DC3232")
+end
 
-local Players    = game:GetService("Players")
+local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local UIS        = game:GetService("UserInputService")
-local LP         = Players.LocalPlayer
-local VIM
+local UIS = game:GetService("UserInputService")
+local LP = Players.LocalPlayer
+local VIM = nil
 pcall(function() VIM = game:GetService("VirtualInputManager") end)
 
--- ===== PENGATURAN =====
-local S = {
-    aim = false, strength = 40, fov = 150, showFov = true,
-    part = "Head", mode = "Always", prio = "Closest to crosshair",
-    predict = 0, sticky = true, team = true, wall = true, maxDist = 1500,
-    trig = false, trigDelay = 0.08,
-    autoShoot = true, fireTol = 28, fireDelay = 0.09,
-    espEnemy = false, espTeamOn = false, espHL = true, tracer = true, tracerOrigin = "Bottom", tracerThick = 1.5,
-    espName = true, espHealth = true, espDist = true,
-    hitbox = false, hitSize = 6,
-    fovChange = false, fovValue = 90,
-}
-local PARTS = { "Head", "Body", "Closest part" }
-local MODES = { "Always", "Hold Right Mouse", "Hold Left Mouse" }
-local PRIOS = { "Closest to crosshair", "Closest distance", "Lowest health" }
-
--- ===== HELPER =====
 local function Cam() return workspace.CurrentCamera end
+
+-- ===== HOST GUI (FOV circle + ESP) =====
+local host
+do
+    local parent
+    pcall(function() if gethui then parent = gethui() end end)
+    if not parent then pcall(function() parent = game:GetService("CoreGui") end) end
+    if not parent then parent = LP:WaitForChild("PlayerGui") end
+    host = Instance.new("ScreenGui")
+    host.Name = "KatsDeagleHost"
+    host.ResetOnSpawn = false
+    host.IgnoreGuiInset = true
+    host.DisplayOrder = 5
+    pcall(function() if syn and syn.protect_gui then syn.protect_gui(host) end end)
+    host.Parent = parent
+end
+local espFolder = Instance.new("Folder")
+espFolder.Name = "ESP"
+espFolder.Parent = host
+
+-- ===== STATE =====
+local AIM_ON, AIM_TEAMCHECK, AIM_WALL = false, true, true
+local AIM_PART, AIM_PRIORITY, AIM_TRIGGER = "Head", "Closest to crosshair", "Always"
+local AIM_SMOOTH, AIM_MAXDIST, AIM_PRED = 30, 1000, 0
+local AimKey = Enum.KeyCode.Q
+
+local FOV_SHOW, FOV_SIZE, FOV_CENTER = true, 150, "Screen center"
+local FOV_COLOR = Color3.fromRGB(255, 255, 255)
+
+local ESP_ON, ESP_ENEMY, ESP_TEAM = false, true, false
+local ESP_CHAMS, ESP_NAME, ESP_HP, ESP_DIST, ESP_TRACER = true, true, true, true, false
+local ESP_MAX = 1500
+local COL_ENEMY, COL_TEAM = Color3.fromRGB(255, 50, 50), Color3.fromRGB(80, 200, 100)
+
+local TRIG_ON, TRIG_DELAY = false, 0.1
+local HB_ON, HB_SIZE = false, 6
+
+-- ===== HELPERS =====
+-- musuh = pemain lain; kalau kedua pihak punya Team, musuh = Team beda. (FFA: semua musuh)
+local function IsEnemy(p)
+    if p == LP then return false end
+    if p.Team == nil or LP.Team == nil then return true end
+    return p.Team ~= LP.Team
+end
 
 local function Alive(p)
     local c = p.Character
     local h = c and c:FindFirstChildOfClass("Humanoid")
-    if c and h and h.Health > 0 then return c, h end
+    local r = c and c:FindFirstChild("HumanoidRootPart")
+    if h and r and h.Health > 0 then return c, h, r end
 end
 
-local function Enemy(p)
-    if p == LP then return false end
-    if S.team and p.Team ~= nil and LP.Team ~= nil and p.Team == LP.Team then return false end
-    return true
+local function TorsoOf(c)
+    return c:FindFirstChild("UpperTorso") or c:FindFirstChild("Torso") or c:FindFirstChild("HumanoidRootPart")
 end
 
-local function RayParams()
+local function Center()
+    local cam = Cam()
+    local vp = cam and cam.ViewportSize or Vector2.new(800, 400)
+    if FOV_CENTER == "Mouse" and UIS.MouseEnabled then
+        local m = UIS:GetMouseLocation()
+        return Vector2.new(m.X, m.Y)  -- GetMouseLocation sudah ikut inset; host IgnoreGuiInset=true
+    end
+    return vp / 2
+end
+
+local function Visible(from, part, ignore)
     local rp = RaycastParams.new()
     rp.FilterType = Enum.RaycastFilterType.Exclude
-    rp.FilterDescendantsInstances = { LP.Character }
+    rp.FilterDescendantsInstances = ignore
     rp.IgnoreWater = true
-    return rp
+    local res = workspace:Raycast(from, part.Position - from, rp)
+    return res == nil
 end
 
-local function Visible(part, char)
-    local cam = Cam()
-    if not cam then return false end
-    local origin = cam.CFrame.Position
-    local hit = workspace:Raycast(origin, part.Position - origin, RayParams())
-    return hit == nil or hit.Instance:IsDescendantOf(char)
-end
-
-local BODY = { "Head", "UpperTorso", "Torso", "HumanoidRootPart" }
-local function PartFor(char, cam, center)
-    if S.part == "Head" then return char:FindFirstChild("Head") end
-    if S.part == "Body" then
-        return char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
-    end
+-- pilih bagian tubuh sesuai pengaturan
+local function PickPart(c, cam, center)
+    if AIM_PART == "Head" then return c:FindFirstChild("Head") or TorsoOf(c) end
+    if AIM_PART == "Torso" then return TorsoOf(c) end
+    -- Closest part: bagian yang paling dekat ke crosshair
     local best, bd
-    for _, n in ipairs(BODY) do
-        local p = char:FindFirstChild(n)
+    for _, n in ipairs({ "Head", "UpperTorso", "Torso", "HumanoidRootPart", "LowerTorso" }) do
+        local p = c:FindFirstChild(n)
         if p then
-            local sp, on = cam:WorldToViewportPoint(p.Position)
+            local v, on = cam:WorldToViewportPoint(p.Position)
             if on then
-                local d = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+                local d = (Vector2.new(v.X, v.Y) - center).Magnitude
                 if not bd or d < bd then best, bd = p, d end
             end
         end
@@ -90,391 +121,436 @@ local function PartFor(char, cam, center)
     return best
 end
 
--- ===== PILIH TARGET =====
-local Current   -- { plr, part } target terkunci (untuk Sticky)
-local function Evaluate(p, cam, center, myPos)
-    if not Enemy(p) then return end
-    local c, h = Alive(p)
-    if not c then return end
-    local part = PartFor(c, cam, center)
-    if not part then return end
-    local sp, on = cam:WorldToViewportPoint(part.Position)
-    if not on then return end
-    local sd = (Vector2.new(sp.X, sp.Y) - center).Magnitude
-    local wd = (part.Position - myPos).Magnitude
-    if wd > S.maxDist then return end
-    if S.wall and not Visible(part, c) then return end
-    return part, sd, wd, h.Health
-end
-
-local function Pick()
+-- ===== TARGET =====
+local function GetTarget()
     local cam = Cam()
     if not cam then return end
-    local vp = cam.ViewportSize
-    local center = Vector2.new(vp.X / 2, vp.Y / 2)
-    local myRoot = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
-    local myPos = myRoot and myRoot.Position or cam.CFrame.Position
-
-    if S.sticky and Current and Current.plr.Parent then
-        local part, sd = Evaluate(Current.plr, cam, center, myPos)
-        if part and sd <= S.fov * 1.5 then Current.part = part return Current.plr, part end
-    end
-
-    local bestP, bestPart, bestScore
+    local center = Center()
+    local myChar = LP.Character
+    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    local best, bestScore
     for _, p in ipairs(Players:GetPlayers()) do
-        local part, sd, wd, hp = Evaluate(p, cam, center, myPos)
-        if part and sd <= S.fov then
-            local score = (S.prio == "Closest distance" and wd) or (S.prio == "Lowest health" and hp) or sd
-            if not bestScore or score < bestScore then bestP, bestPart, bestScore = p, part, score end
+        if p ~= LP and (not AIM_TEAMCHECK or IsEnemy(p)) then
+            local c, h, r = Alive(p)
+            if c then
+                local part = PickPart(c, cam, center)
+                if part then
+                    local v, on = cam:WorldToViewportPoint(part.Position)
+                    if on then
+                        local sd = (Vector2.new(v.X, v.Y) - center).Magnitude
+                        local wd = (cam.CFrame.Position - part.Position).Magnitude
+                        if sd <= FOV_SIZE and wd <= AIM_MAXDIST then
+                            if not AIM_WALL or Visible(cam.CFrame.Position, part, { myChar, c }) then
+                                local score
+                                if AIM_PRIORITY == "Closest distance" then score = wd
+                                elseif AIM_PRIORITY == "Lowest health" then score = h.Health
+                                else score = sd end
+                                if not bestScore or score < bestScore then
+                                    best, bestScore = { part = part, root = r, char = c, player = p }, score
+                                end
+                            end
+                        end
+                    end
+                end
+            end
         end
     end
-    if bestP then Current = { plr = bestP, part = bestPart } else Current = nil end
-    return bestP, bestPart
+    return best
 end
 
--- ===== AIMBOT =====
+-- ===== FOV CIRCLE =====
 local fovFrame = Instance.new("Frame")
+fovFrame.Name = "FOV"
 fovFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-fovFrame.Position = UDim2.fromScale(0.5, 0.5)
 fovFrame.BackgroundTransparency = 1
-fovFrame.Size = UDim2.fromOffset(300, 300)
+fovFrame.BorderSizePixel = 0
 fovFrame.Visible = false
-local fc = Instance.new("UICorner"); fc.CornerRadius = UDim.new(1, 0); fc.Parent = fovFrame
-local fs = Instance.new("UIStroke"); fs.Thickness = 1.5; fs.Color = W.Accent; fs.Parent = fovFrame
-fovFrame.Parent = W.Gui
-W:_hook(function() fs.Color = W.Accent end)
-
-local function Held()
-    if S.mode == "Hold Right Mouse" then return UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) end
-    if S.mode == "Hold Left Mouse" then return UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) end
-    return true
-end
-
--- ===== TEMBAK =====
-local lastShot = 0
-local function Click()
-    local cam = Cam()
-    local vp = cam and cam.ViewportSize or Vector2.new(800, 600)
-    if typeof(mouse1click) == "function" then pcall(mouse1click) return end
-    if VIM then
-        pcall(function()
-            VIM:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, true, game, 0)
-            VIM:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, false, game, 0)
-        end)
-    end
-end
-
-local targetName = "-"
-local lastT = os.clock()
-local lastAuto = 0
-local function AimStep()
-    local now = os.clock()
-    local dt = math.clamp(now - lastT, 0.001, 0.1)
-    lastT = now
-    fovFrame.Visible = S.aim and S.showFov
-    fovFrame.Size = UDim2.fromOffset(S.fov * 2, S.fov * 2)
-    if not S.aim or not Held() then targetName = "-"; Current = nil return end
-    local cam = Cam()
-    local p, part = Pick()
-    if not (p and part and cam) then targetName = "-" return end
-    targetName = p.DisplayName
-    local pos = part.Position
-    if S.predict > 0 then pos = pos + part.AssemblyLinearVelocity * S.predict end
-    local goal = CFrame.lookAt(cam.CFrame.Position, pos)
-    local s = S.strength / 100
-    local alpha = (s >= 1) and 1 or (1 - math.exp(-dt * s * s * 45))      -- 100 = langsung kunci
-    cam.CFrame = cam.CFrame:Lerp(goal, math.clamp(alpha, 0, 1))
-
-    -- AUTO SHOOT: musuh di dalam lingkaran -> kamera dikunci ke target -> tembak begitu crosshair sudah kena
-    if S.autoShoot and now - lastAuto >= S.fireDelay then
-        local vp = cam.ViewportSize
-        local sp = cam:WorldToViewportPoint(pos)
-        local err = (Vector2.new(sp.X, sp.Y) - Vector2.new(vp.X / 2, vp.Y / 2)).Magnitude
-        if err <= S.fireTol then
-            lastAuto = now
-            Click()
-        end
-    end
-end
-
-local bound = false
-pcall(function()
-    RunService:BindToRenderStep("KatssinnnAim", Enum.RenderPriority.Camera.Value + 1, AimStep)   -- setelah kamera game
-    bound = true
-end)
-if not bound then W.Conns[#W.Conns + 1] = RunService.RenderStepped:Connect(AimStep) end
+fovFrame.Parent = host
+Instance.new("UICorner", fovFrame).CornerRadius = UDim.new(1, 0)
+local fovStroke = Instance.new("UIStroke")
+fovStroke.Thickness = 1.5
+fovStroke.Color = FOV_COLOR
+fovStroke.Parent = fovFrame
 
 -- ===== TRIGGERBOT =====
-W.Conns[#W.Conns + 1] = RunService.Heartbeat:Connect(function()
-    if not S.trig or not W.Alive then return end
-    if os.clock() - lastShot < S.trigDelay then return end
+local clicking = false
+local function Click()
+    if clicking then return end
+    clicking = true
+    task.spawn(function()
+        if mouse1click then
+            pcall(mouse1click)
+        elseif VIM then
+            local c = Center()
+            pcall(function()
+                VIM:SendMouseButtonEvent(c.X, c.Y, 0, true, game, 0)
+                task.wait(0.02)
+                VIM:SendMouseButtonEvent(c.X, c.Y, 0, false, game, 0)
+            end)
+        end
+        task.wait(TRIG_DELAY)
+        clicking = false
+    end)
+end
+
+local function TriggerCheck()
     local cam = Cam()
     if not cam then return end
-    local vp = cam.ViewportSize
-    local ray = cam:ViewportPointToRay(vp.X / 2, vp.Y / 2)
-    local res = workspace:Raycast(ray.Origin, ray.Direction * S.maxDist, RayParams())
+    local rp = RaycastParams.new()
+    rp.FilterType = Enum.RaycastFilterType.Exclude
+    rp.FilterDescendantsInstances = { LP.Character }
+    rp.IgnoreWater = true
+    local c = Center()
+    local ray = cam:ViewportPointToRay(c.X, c.Y)
+    local res = workspace:Raycast(ray.Origin, ray.Direction * 2000, rp)
     if not res then return end
     local model = res.Instance:FindFirstAncestorOfClass("Model")
     local p = model and Players:GetPlayerFromCharacter(model)
-    if p and Enemy(p) and Alive(p) then
-        lastShot = os.clock()
-        Click()
-    end
-end)
-
--- ===== ESP =====
--- musuh = merah, tim = biru. Garis (tracer) menuju badan, nama di atas kepala.
-local COL_ENEMY = Color3.fromRGB(255, 60, 60)
-local COL_TEAM  = Color3.fromRGB(70, 140, 255)
-local esp = {}   -- [Player] = { hl, bb, lbl, line, char }
-
-local function IsTeammate(p)
-    return p.Team ~= nil and LP.Team ~= nil and p.Team == LP.Team
+    if p and IsEnemy(p) and Alive(p) then Click() end
 end
 
-local function EspRemove(p)
+-- ===== ESP =====
+local esp = {}
+local hasDrawing = (typeof(Drawing) == "table" or typeof(Drawing) == "userdata") and Drawing.new ~= nil
+
+local function DestroyESP(p)
     local e = esp[p]
     if not e then return end
-    for _, k in ipairs({ "hl", "bb", "line" }) do pcall(function() e[k]:Destroy() end) end
+    pcall(function() e.hl:Destroy() end)
+    pcall(function() e.bb:Destroy() end)
+    if e.line then pcall(function() e.line:Remove() end) end
     esp[p] = nil
 end
 
-local function EspNew(c)
+local function BuildESP(p, c)
+    DestroyESP(p)
     local e = { char = c }
-    local hl = Instance.new("Highlight")
-    hl.Adornee = c
-    hl.FillTransparency = 0.65
-    hl.OutlineTransparency = 0
-    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-    hl.Parent = W.Gui
-    local bb = Instance.new("BillboardGui")
-    bb.Adornee = c:FindFirstChild("Head") or c:FindFirstChild("HumanoidRootPart")
-    bb.Size = UDim2.fromOffset(180, 34)
-    bb.StudsOffset = Vector3.new(0, 2.4, 0)
-    bb.AlwaysOnTop = true
-    bb.Parent = W.Gui
-    local lbl = Instance.new("TextLabel")
-    lbl.BackgroundTransparency = 1
-    lbl.Size = UDim2.fromScale(1, 1)
-    lbl.Font = Enum.Font.GothamBold
-    lbl.TextSize = 13
-    lbl.TextStrokeTransparency = 0.3
-    lbl.Text = ""
-    lbl.Parent = bb
-    local line = Instance.new("Frame")
-    line.AnchorPoint = Vector2.new(0.5, 0.5)
-    line.BorderSizePixel = 0
-    line.Visible = false
-    line.Size = UDim2.fromOffset(0, 2)
-    line.Parent = W.Gui
-    e.hl, e.bb, e.lbl, e.line = hl, bb, lbl, line
+    e.hl = Instance.new("Highlight")
+    e.hl.Adornee = c
+    e.hl.FillTransparency = 0.75
+    e.hl.OutlineTransparency = 0
+    e.hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    e.hl.Parent = espFolder
+
+    e.bb = Instance.new("BillboardGui")
+    e.bb.Adornee = c:FindFirstChild("Head") or c:FindFirstChild("HumanoidRootPart")
+    e.bb.AlwaysOnTop = true
+    e.bb.Size = UDim2.fromOffset(200, 44)
+    e.bb.StudsOffset = Vector3.new(0, 2.6, 0)
+    e.bb.Parent = espFolder
+    e.txt = Instance.new("TextLabel")
+    e.txt.Size = UDim2.fromScale(1, 1)
+    e.txt.BackgroundTransparency = 1
+    e.txt.Font = Enum.Font.GothamBold
+    e.txt.TextSize = 13
+    e.txt.TextStrokeTransparency = 0.4
+    e.txt.Text = ""
+    e.txt.Parent = e.bb
+
+    if hasDrawing then
+        pcall(function()
+            e.line = Drawing.new("Line")
+            e.line.Thickness = 1.2
+            e.line.Visible = false
+        end)
+    end
+    esp[p] = e
     return e
 end
 
-local function EspUpdate()      -- bikin/hapus objek + isi teks (5x per detik)
-    local myRoot = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= LP then
-            local c, h = Alive(p)
-            local team = IsTeammate(p)
-            local show = c ~= nil and ((team and S.espTeamOn) or (not team and S.espEnemy))
-            local e = esp[p]
-            if e and (not show or e.char ~= c) then EspRemove(p); e = nil end
-            if show then
-                if not e then e = EspNew(c); esp[p] = e end
-                local col = team and COL_TEAM or COL_ENEMY
-                e.hl.Enabled = S.espHL
-                e.hl.FillColor = col
-                e.hl.OutlineColor = col
-                local parts = {}
-                if S.espName then parts[#parts + 1] = p.DisplayName end
-                if S.espHealth then parts[#parts + 1] = math.floor(h.Health) .. " HP" end
-                if S.espDist and myRoot then
-                    local hrp = c:FindFirstChild("HumanoidRootPart")
-                    if hrp then parts[#parts + 1] = math.floor((hrp.Position - myRoot.Position).Magnitude) .. "m" end
-                end
-                e.lbl.Text = table.concat(parts, "  ·  ")
-                e.lbl.TextColor3 = col
-                e.bb.Enabled = #parts > 0
-                e.line.BackgroundColor3 = col
-            end
-        end
-    end
-    for p in pairs(esp) do
-        if not p.Parent then EspRemove(p) end
-    end
+local function HideESP(e)
+    e.hl.Enabled = false
+    e.bb.Enabled = false
+    if e.line then e.line.Visible = false end
 end
 
-local function EspLines()       -- garis tracer dari tepi layar ke badan (tiap frame)
-    local cam = Cam()
-    if not cam then return end
-    local vp = cam.ViewportSize
-    local from
-    if S.tracerOrigin == "Center" then from = Vector2.new(vp.X / 2, vp.Y / 2)
-    elseif S.tracerOrigin == "Top" then from = Vector2.new(vp.X / 2, 0)
-    else from = Vector2.new(vp.X / 2, vp.Y) end
-    for _, e in pairs(esp) do
-        local line = e.line
-        local c = e.char
-        local body = c and (c:FindFirstChild("UpperTorso") or c:FindFirstChild("Torso") or c:FindFirstChild("HumanoidRootPart"))
-        if S.tracer and body then
-            local sp, on = cam:WorldToViewportPoint(body.Position)
-            if on and sp.Z > 0 then
-                local to = Vector2.new(sp.X, sp.Y)
-                local d = to - from
-                local len = d.Magnitude
-                line.Position = UDim2.fromOffset((from.X + to.X) / 2, (from.Y + to.Y) / 2)
-                line.Size = UDim2.fromOffset(len, S.tracerThick)
-                line.Rotation = math.deg(math.atan2(d.Y, d.X))
-                line.Visible = true
-            else
-                line.Visible = false
-            end
-        else
-            line.Visible = false
-        end
+local function UpdateESP(p, myPos, cam)
+    local e = esp[p]
+    local c, h, r = Alive(p)
+    local enemy = IsEnemy(p)
+    local want = ESP_ON and c and ((enemy and ESP_ENEMY) or (not enemy and ESP_TEAM))
+    if want and myPos then
+        if (r.Position - myPos).Magnitude > ESP_MAX then want = false end
     end
-end
-
--- ===== HITBOX =====
-local hitOrig = {}   -- [part] = { Size, Transparency, CanCollide }
-local function HitboxRestore()
-    for part, o in pairs(hitOrig) do
-        pcall(function()
-            part.Size = o.Size; part.Transparency = o.Transparency; part.CanCollide = o.CanCollide
-        end)
-    end
-    hitOrig = {}
-end
-local function HitboxUpdate()
-    if not S.hitbox then
-        if next(hitOrig) then HitboxRestore() end
+    if not want then
+        if e then HideESP(e) end
         return
     end
-    for _, p in ipairs(Players:GetPlayers()) do
-        if Enemy(p) then
-            local c = Alive(p)
-            local hrp = c and c:FindFirstChild("HumanoidRootPart")
-            if hrp then
-                if not hitOrig[hrp] then hitOrig[hrp] = { Size = hrp.Size, Transparency = hrp.Transparency, CanCollide = hrp.CanCollide } end
-                pcall(function()
-                    hrp.Size = Vector3.new(S.hitSize, S.hitSize, S.hitSize)
-                    hrp.Transparency = 0.75
-                    hrp.CanCollide = false
-                end)
+    if not e or e.char ~= c or not e.hl.Parent then e = BuildESP(p, c) end
+    local col = enemy and COL_ENEMY or COL_TEAM
+    e.hl.Enabled = ESP_CHAMS
+    e.hl.FillColor, e.hl.OutlineColor = col, col
+    local parts = {}
+    if ESP_NAME then parts[#parts + 1] = p.DisplayName ~= p.Name and p.DisplayName or p.Name end
+    local info = {}
+    if ESP_HP then info[#info + 1] = math.floor(h.Health) .. " HP" end
+    if ESP_DIST and myPos then info[#info + 1] = math.floor((r.Position - myPos).Magnitude) .. "m" end
+    if #info > 0 then parts[#parts + 1] = table.concat(info, " | ") end
+    e.bb.Enabled = #parts > 0
+    e.txt.Text = table.concat(parts, "\n")
+    e.txt.TextColor3 = col
+    if e.line then
+        if ESP_TRACER and cam then
+            local v, on = cam:WorldToViewportPoint(r.Position)
+            if on then
+                local vp = cam.ViewportSize
+                e.line.From = Vector2.new(vp.X / 2, vp.Y)
+                e.line.To = Vector2.new(v.X, v.Y)
+                e.line.Color = col
+                e.line.Visible = true
+            else
+                e.line.Visible = false
             end
+        else
+            e.line.Visible = false
         end
     end
 end
 
--- ===== FOV CAMERA =====
-local origFov
-local function FovUpdate()
-    local cam = Cam()
-    if not cam then return end
-    if S.fovChange then
-        origFov = origFov or cam.FieldOfView
-        cam.FieldOfView = S.fovValue
-    elseif origFov then
-        cam.FieldOfView = origFov
-        origFov = nil
+Players.PlayerRemoving:Connect(DestroyESP)
+
+-- ===== HITBOX =====
+local hbOrig = {}
+local function HBRestore()
+    for hrp, o in pairs(hbOrig) do
+        pcall(function()
+            hrp.Size = o.Size; hrp.Transparency = o.Transparency; hrp.CanCollide = o.CanCollide
+        end)
+    end
+    hbOrig = {}
+end
+local function HBApply()
+    local keep = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LP and IsEnemy(p) then
+            local c, _, r = Alive(p)
+            if c then
+                keep[r] = true
+                if not hbOrig[r] then hbOrig[r] = { Size = r.Size, Transparency = r.Transparency, CanCollide = r.CanCollide } end
+                r.Size = Vector3.new(HB_SIZE, HB_SIZE, HB_SIZE)
+                r.Transparency = 0.8
+                r.CanCollide = false
+            end
+        end
+    end
+    for r, o in pairs(hbOrig) do
+        if not keep[r] then
+            pcall(function() r.Size = o.Size; r.Transparency = o.Transparency; r.CanCollide = o.CanCollide end)
+            hbOrig[r] = nil
+        end
     end
 end
 
-task.spawn(function()
-    while W.Alive do
-        pcall(EspUpdate)
-        pcall(HitboxUpdate)
-        pcall(FovUpdate)
-        task.wait(0.2)
+-- ===== MAIN LOOP =====
+local alive = true
+local espTimer, hbTimer = 0, 0
+local STEP = "KatsDeagleAim"
+RunService:BindToRenderStep(STEP, Enum.RenderPriority.Camera.Value + 1, function(dt)
+    if not alive then return end
+    local cam = Cam()
+    if not cam then return end
+
+    -- FOV circle
+    local showFov = FOV_SHOW
+    fovFrame.Visible = showFov
+    if showFov then
+        local c = Center()
+        fovFrame.Position = UDim2.fromOffset(c.X, c.Y)
+        fovFrame.Size = UDim2.fromOffset(FOV_SIZE * 2, FOV_SIZE * 2)
+        fovStroke.Color = FOV_COLOR
+    end
+
+    -- Aimbot
+    if AIM_ON then
+        local active = true
+        if AIM_TRIGGER == "Hold key" then
+            active = UIS:IsKeyDown(AimKey) or UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+        end
+        if active then
+            local t = GetTarget()
+            if t then
+                local pos = t.part.Position
+                if AIM_PRED > 0 then pos = pos + t.root.AssemblyLinearVelocity * AIM_PRED end
+                local goal = CFrame.lookAt(cam.CFrame.Position, pos)
+                local alpha = math.clamp(1 - AIM_SMOOTH / 100, 0.03, 1)
+                alpha = 1 - (1 - alpha) ^ (math.clamp(dt, 0, 0.1) * 60)
+                cam.CFrame = cam.CFrame:Lerp(goal, alpha)
+            end
+        end
+    end
+
+    -- ESP (tracer tiap frame, teks/warna ~7x per detik cukup, tapi disatukan agar simpel)
+    espTimer += dt
+    if ESP_ON or next(esp) then
+        local myRoot = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+        local myPos = myRoot and myRoot.Position or cam.CFrame.Position
+        if ESP_TRACER or espTimer >= 0.12 then
+            espTimer = 0
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= LP then pcall(UpdateESP, p, myPos, cam) end
+            end
+        end
+    end
+
+    -- Triggerbot
+    if TRIG_ON and not clicking then pcall(TriggerCheck) end
+
+    -- Hitbox
+    if HB_ON then
+        hbTimer += dt
+        if hbTimer >= 0.3 then hbTimer = 0; pcall(HBApply) end
     end
 end)
-W.Conns[#W.Conns + 1] = RunService.RenderStepped:Connect(function()
-    if S.fovChange then pcall(FovUpdate) end
-    pcall(EspLines)
+
+W:OnUnload(function()
+    alive = false
+    pcall(function() RunService:UnbindFromRenderStep(STEP) end)
+    for p in pairs(esp) do DestroyESP(p) end
+    HBRestore()
+    pcall(function() host:Destroy() end)
 end)
 
 -- ===== UI =====
-local HomePage = W:AddPage({ Name = "Home", Icon = "⌂" })
-local Main = W:AddPage({ Name = "Main", Icon = "▣" })
-local function OnOff(name, v) N(name, v and "ON" or "OFF", v and "#50C864" or "#DC3232") end
+-- Home dibangun TERAKHIR supaya error di Home tidak menghentikan fitur Main.
+local HomePage = W:AddPage({ Name = "Home", Icon = "house" })
+local Main = W:AddPage({ Name = "Main", Icon = "crosshair" })
+local PlayerPage = W:AddPage({ Name = "Player", Icon = "user" })
 
--- ---------- kolom 1 ----------
-local cAim = Main:AddCard({ Title = "Aimbot", Icon = "◎", Column = 1 })
-local tog_aim = cAim:Toggle({ Title = "Aimbot", id = "aim", Callback = function(v) S.aim = v; if not v then Current = nil end OnOff("Aimbot", v) end })
-cAim:Slider({ Title = "Aim Strength", Min = 1, Max = 100, Value = 40, Suffix = "%", id = "aim_strength", Callback = function(v) S.strength = v end })
-cAim:Slider({ Title = "FOV Radius", Min = 20, Max = 600, Value = 150, id = "aim_fov", Callback = function(v) S.fov = v end })
-cAim:Toggle({ Title = "Show FOV Circle", Value = true, id = "aim_showfov", Callback = function(v) S.showFov = v end })
-cAim:Toggle({ Title = "Auto Shoot (musuh di lingkaran)", Value = true, id = "aim_auto", Callback = function(v) S.autoShoot = v end })
-cAim:Slider({ Title = "Fire Accuracy (px)", Min = 4, Max = 120, Value = 28, id = "aim_tol", Callback = function(v) S.fireTol = v end })
-cAim:Slider({ Title = "Fire Delay (s)", Min = 0, Max = 0.6, Value = 0.09, Rounding = 2, id = "aim_firedelay", Callback = function(v) S.fireDelay = v end })
-cAim:Dropdown({ Title = "Aim Part", List = PARTS, Value = "Head", id = "aim_part", Callback = function(v) S.part = v or "Head" end })
-cAim:Dropdown({ Title = "Aim Mode", List = MODES, Value = "Always", id = "aim_mode", Callback = function(v) S.mode = v or "Always" end })
-cAim:Dropdown({ Title = "Target Priority", List = PRIOS, Value = "Closest to crosshair", id = "aim_prio", Callback = function(v) S.prio = v or PRIOS[1] end })
-cAim:Slider({ Title = "Prediction", Min = 0, Max = 0.3, Value = 0, Rounding = 2, id = "aim_predict", Callback = function(v) S.predict = v end })
-cAim:Toggle({ Title = "Sticky Target", Value = true, id = "aim_sticky", Callback = function(v) S.sticky = v; Current = nil end })
-cAim:Keybind({ Title = "Aimbot Key", Value = Enum.KeyCode.Unknown, id = "aim_key", Callback = function() tog_aim:Set(not tog_aim:Get()) end })
+-- ---------- kolom 1: Aimbot ----------
+local cAim = Main:AddCard({ Title = "Aimbot", Icon = "crosshair", Column = 1 })
+cAim:Toggle({
+    Title = "Aimbot", id = "aim_on",
+    Callback = function(v) AIM_ON = v; OnOff("Aimbot", v) end,
+})
+cAim:Dropdown({
+    Title = "Aim part", List = { "Head", "Torso", "Closest part" }, Value = "Head", id = "aim_part",
+    Callback = function(v) if v then AIM_PART = tostring(v) end end,
+})
+cAim:Dropdown({
+    Title = "Target priority", List = { "Closest to crosshair", "Closest distance", "Lowest health" },
+    Value = "Closest to crosshair", id = "aim_priority",
+    Callback = function(v) if v then AIM_PRIORITY = tostring(v) end end,
+})
+cAim:Dropdown({
+    Title = "Aim trigger", List = { "Always", "Hold key" }, Value = "Always", id = "aim_trigger",
+    Callback = function(v) if v then AIM_TRIGGER = tostring(v) end end,
+})
+cAim:Keybind({
+    Title = "Aim key (mode Hold key / klik kanan)", Value = Enum.KeyCode.Q, id = "aim_key",
+    Callback = function(k) if typeof(k) == "EnumItem" then AimKey = k end end,
+})
+cAim:Slider({
+    Title = "Smoothness (0 = langsung kunci)", Min = 0, Max = 95, Value = 30, Rounding = 0, Suffix = "%", id = "aim_smooth",
+    Callback = function(v) AIM_SMOOTH = v end,
+})
+cAim:Slider({
+    Title = "Prediction (gerak target)", Min = 0, Max = 0.3, Value = 0, Rounding = 2, id = "aim_pred",
+    Callback = function(v) AIM_PRED = v end,
+})
+cAim:Slider({
+    Title = "Max distance", Min = 50, Max = 3000, Value = 1000, Rounding = 0, Suffix = " st", id = "aim_maxdist",
+    Callback = function(v) AIM_MAXDIST = v end,
+})
+cAim:Toggle({
+    Title = "Team check (abaikan teman)", Value = true, id = "aim_teamcheck",
+    Callback = function(v) AIM_TEAMCHECK = v end,
+})
+cAim:Toggle({
+    Title = "Wall check (hanya yang terlihat)", Value = true, id = "aim_wall",
+    Callback = function(v) AIM_WALL = v end,
+})
 
-local cChk = Main:AddCard({ Title = "Checks", Icon = "✓", Column = 1 })
-cChk:Toggle({ Title = "Team Check", Value = true, id = "chk_team", Callback = function(v) S.team = v end })
-cChk:Toggle({ Title = "Wall Check (Visible only)", Value = true, id = "chk_wall", Callback = function(v) S.wall = v end })
-cChk:Slider({ Title = "Max Distance", Min = 50, Max = 3000, Value = 1500, id = "chk_dist", Callback = function(v) S.maxDist = v end })
+local cFov = Main:AddCard({ Title = "FOV", Icon = "scan", Column = 1 })
+cFov:Toggle({
+    Title = "Show FOV circle", Value = true, id = "fov_show",
+    Callback = function(v) FOV_SHOW = v end,
+})
+cFov:Slider({
+    Title = "FOV size", Min = 30, Max = 600, Value = 150, Rounding = 0, Suffix = " px", id = "fov_size",
+    Callback = function(v) FOV_SIZE = v end,
+})
+cFov:Color({
+    Title = "FOV color", Value = "#FFFFFF", id = "fov_color",
+    Callback = function(c) if typeof(c) == "Color3" then FOV_COLOR = c end end,
+})
+cFov:Dropdown({
+    Title = "FOV center", List = { "Screen center", "Mouse" }, Value = "Screen center", id = "fov_center",
+    Callback = function(v) if v then FOV_CENTER = tostring(v) end end,
+})
 
--- ---------- kolom 2 ----------
-local cTrig = Main:AddCard({ Title = "Triggerbot", Icon = "✦", Column = 2 })
-cTrig:Toggle({ Title = "Triggerbot", id = "trig", Callback = function(v) S.trig = v; OnOff("Triggerbot", v) end })
-cTrig:Slider({ Title = "Shoot Delay (s)", Min = 0, Max = 0.5, Value = 0.08, Rounding = 2, id = "trig_delay", Callback = function(v) S.trigDelay = v end })
+-- ---------- kolom 2: ESP + Extras ----------
+local cEsp = Main:AddCard({ Title = "ESP", Icon = "eye", Column = 2 })
+cEsp:Toggle({
+    Title = "ESP", id = "esp_on",
+    Callback = function(v)
+        ESP_ON = v
+        OnOff("ESP", v)
+        if not v then for _, e in pairs(esp) do HideESP(e) end end
+    end,
+})
+cEsp:Toggle({ Title = "Show enemy", Value = true, id = "esp_enemy", Callback = function(v) ESP_ENEMY = v end })
+cEsp:Toggle({ Title = "Show team", id = "esp_team", Callback = function(v) ESP_TEAM = v end })
+cEsp:Toggle({ Title = "Chams (highlight)", Value = true, id = "esp_chams", Callback = function(v) ESP_CHAMS = v end })
+cEsp:Toggle({ Title = "Name", Value = true, id = "esp_name", Callback = function(v) ESP_NAME = v end })
+cEsp:Toggle({ Title = "Health", Value = true, id = "esp_hp", Callback = function(v) ESP_HP = v end })
+cEsp:Toggle({ Title = "Distance", Value = true, id = "esp_dist", Callback = function(v) ESP_DIST = v end })
+local togTracer = cEsp:Toggle({
+    Title = "Tracers", id = "esp_tracer",
+    Callback = function(v)
+        if v and not hasDrawing then N("Tracers", "Executor tidak mendukung Drawing API", "#FFA500") end
+        ESP_TRACER = v
+    end,
+})
+cEsp:Slider({
+    Title = "ESP max distance", Min = 100, Max = 5000, Value = 1500, Rounding = 0, Suffix = " st", id = "esp_max",
+    Callback = function(v) ESP_MAX = v end,
+})
+cEsp:Color({
+    Title = "Enemy color", Value = "#FF3232", id = "esp_colenemy",
+    Callback = function(c) if typeof(c) == "Color3" then COL_ENEMY = c end end,
+})
+cEsp:Color({
+    Title = "Team color", Value = "#50C864", id = "esp_colteam",
+    Callback = function(c) if typeof(c) == "Color3" then COL_TEAM = c end end,
+})
 
-local cEsp = Main:AddCard({ Title = "ESP", Icon = "◉", Column = 2 })
-cEsp:Toggle({ Title = "ESP Enemy (merah)", id = "esp_enemy", Callback = function(v) S.espEnemy = v; OnOff("ESP Enemy", v) end })
-cEsp:Toggle({ Title = "ESP Team (biru)", id = "esp_team", Callback = function(v) S.espTeamOn = v; OnOff("ESP Team", v) end })
-cEsp:Toggle({ Title = "Tracer Line", Value = true, id = "esp_tracer", Callback = function(v) S.tracer = v end })
-cEsp:Dropdown({ Title = "Tracer From", List = { "Bottom", "Center", "Top" }, Value = "Bottom", id = "esp_origin", Callback = function(v) S.tracerOrigin = v or "Bottom" end })
-cEsp:Slider({ Title = "Tracer Thickness", Min = 1, Max = 5, Value = 1.5, Rounding = 1, id = "esp_thick", Callback = function(v) S.tracerThick = v end })
-cEsp:Toggle({ Title = "Highlight Body", Value = true, id = "esp_hl", Callback = function(v) S.espHL = v end })
-cEsp:Toggle({ Title = "Name (atas kepala)", Value = true, id = "esp_name", Callback = function(v) S.espName = v end })
-cEsp:Toggle({ Title = "Health", Value = true, id = "esp_health", Callback = function(v) S.espHealth = v end })
-cEsp:Toggle({ Title = "Distance", Value = true, id = "esp_dist", Callback = function(v) S.espDist = v end })
+local cExt = Main:AddCard({ Title = "Extras", Icon = "zap", Column = 2 })
+cExt:Toggle({
+    Title = "Triggerbot (tembak otomatis saat crosshair kena musuh)", id = "trig_on",
+    Callback = function(v) TRIG_ON = v; OnOff("Triggerbot", v) end,
+})
+cExt:Slider({
+    Title = "Trigger delay", Min = 0, Max = 0.5, Value = 0.1, Rounding = 2, Suffix = "s", id = "trig_delay",
+    Callback = function(v) TRIG_DELAY = v end,
+})
+cExt:Toggle({
+    Title = "Hitbox expander (musuh)", id = "hb_on",
+    Callback = function(v)
+        HB_ON = v
+        if not v then HBRestore() end
+        OnOff("Hitbox expander", v)
+    end,
+})
+cExt:Slider({
+    Title = "Hitbox size", Min = 2, Max = 25, Value = 6, Rounding = 0, id = "hb_size",
+    Callback = function(v) HB_SIZE = v end,
+})
 
-local cHit = Main:AddCard({ Title = "Hitbox", Icon = "▣", Column = 2 })
-cHit:Toggle({ Title = "Hitbox Expander", id = "hitbox", Callback = function(v) S.hitbox = v; OnOff("Hitbox Expander", v) end })
-cHit:Slider({ Title = "Hitbox Size", Min = 2, Max = 25, Value = 6, id = "hitbox_size", Callback = function(v) S.hitSize = v end })
+-- isi menu Player (Movement / Fly / Client) ada di ui.lua -> W:BuildPlayer
+local okPl, errPl = pcall(function() W:BuildPlayer(PlayerPage) end)
+if not okPl then
+    warn("[KatssinnnHub] Player error: " .. tostring(errPl))
+    N("Player error", tostring(errPl), "#DC3232", 10)
+end
 
-local cCam = Main:AddCard({ Title = "Camera", Icon = "◔", Column = 2 })
-cCam:Toggle({ Title = "FOV Changer", id = "fovchg", Callback = function(v) S.fovChange = v end })
-cCam:Slider({ Title = "Field of View", Min = 40, Max = 120, Value = 90, id = "fovval", Callback = function(v) S.fovValue = v end })
-
-local cStat = Main:AddCard({ Title = "Status", Icon = "◔", Column = 2 })
-local stLbl = cStat:Label({ Text = "-" })
-task.spawn(function()
-    while W.Alive do
-        task.wait(0.5)
-        pcall(function() stLbl:SetText("Target: " .. targetName .. "\nAimbot: " .. (S.aim and "ON" or "OFF") .. "   Strength: " .. S.strength .. "%") end)
-    end
+local okHome, errHome = pcall(function()
+    W:BuildHome({ Game = "Deagle Map", Version = "v1.0" }, HomePage)
 end)
-
--- bersihkan semua saat Unload
-W:OnUnload(function()
-    pcall(function() RunService:UnbindFromRenderStep("KatssinnnAim") end)
-    for p in pairs(esp) do EspRemove(p) end
-    HitboxRestore()
-    S.fovChange = false; pcall(FovUpdate)
-    pcall(function() fovFrame:Destroy() end)
-end)
-
--- Home / Player / Settings (library): tiap bagian aman dari error
-for _, step in ipairs({
-    function() W:BuildHome({ Game = "Deagle Arena", Version = "v1.0" }, HomePage) end,
-    function() W:BuildPlayer() end,
-    function() W:BuildSettings() end,
-}) do
-    local ok, err = pcall(step)
-    if not ok then
-        warn("[KatssinnnHub] UI error: " .. tostring(err))
-        N("UI error", tostring(err), "#DC3232", 10)
-    end
+if not okHome then
+    warn("[KatssinnnHub] Home error: " .. tostring(errHome))
+    N("Home error", tostring(errHome), "#DC3232", 10)
 end
 
 W:SelectPage("Main")
-W:Ready()
-N("KatssinnnHub", "Deagle Arena dimuat  ·  RCtrl untuk buka/tutup", "#50C864", 4)
+W:Ready()      -- jalankan nilai awal + autoload config
+W:OnBooted(function() N("KatssinnnHub", "Deagle Map dimuat  ·  RCtrl untuk buka/tutup", "#50C864", 4) end)
