@@ -36,11 +36,23 @@ local function Loop(key, enabled, getDelay, fn)
 end
 
 -- ===== KECEPATAN =====
--- Jeda dasar (detik) pada speed 1. Speed 10 = 10% dari jeda dasar.
-local BASE_DELAY = { cast = 1.4, minigame = 2.2, cleanup = 0.3, cycle = 0.6 }
+-- Speed 2 terbukti aman, speed 3+ (jeda dipotong merata) ada langkah yang kepotong terlalu pendek.
+-- Jadi: langkah yang menentukan ikan masuk (cast & minigame) dikunci minimal di nilai aman speed 2,
+-- sedangkan jeda yang tidak menentukan (cleanup & antar siklus) terus dipercepat sampai hampir 0.
+-- Kalau mau menembus batas aman, isi kartu "Fine Tune" (0 = otomatis).
 local SPEED = 6
+local SLOW = { cast = 1.4, minigame = 2.2, cleanup = 0.30, cycle = 0.60 }   -- speed 1
+local SAFE = { cast = 1.26, minigame = 1.98 }                                 -- batas aman (= speed 2)
+local FAST = { cleanup = 0.04, cycle = 0.05 }                                 -- speed 10
+local OVERRIDE = { cast = 0, minigame = 0, cleanup = 0, cycle = 0 }
 local function D(key)
-    return math.max(0.03, BASE_DELAY[key] * (11 - SPEED) / 10)
+    if OVERRIDE[key] and OVERRIDE[key] > 0 then return OVERRIDE[key] end
+    local t = (SPEED - 1) / 9                      -- 0..1
+    if SAFE[key] then
+        local k = math.min((SPEED - 1) / 1, 1)     -- speed 1 -> 2 turun ke batas aman, setelah itu tetap
+        return SLOW[key] + (SAFE[key] - SLOW[key]) * k
+    end
+    return SLOW[key] + (FAST[key] - SLOW[key]) * t
 end
 
 local CAST_DIST   = 25     -- besar vektor arah lemparan (dari contoh: 25)
@@ -166,7 +178,12 @@ cFish:Toggle({
     end,
 })
 cFish:Slider({ Title = "Fishing Speed", Min = 1, Max = 10, Value = 6, id = "fish_speed", Callback = function(v) SPEED = v end })
-cFish:Label({ Text = "Cast → Minigame → Cleanup → Fish Giver. Speed 10 = tercepat; turunkan kalau ikan sering tidak masuk.", Size = 10 })
+cFish:Label({ Text = "Cast → Minigame → Cleanup → Fish Giver. Speed 2 = aman; di atasnya hanya jeda cleanup/antar siklus yang dipercepat.", Size = 10 })
+
+local cTune = Main:AddCard({ Title = "Fine Tune (0 = otomatis)", Icon = "⚙", Column = 1, Collapsed = true })
+for _, e in ipairs({ { "cast", "Cast wait (s)" }, { "minigame", "Minigame wait (s)" }, { "cleanup", "Cleanup wait (s)" }, { "cycle", "Cycle gap (s)" } }) do
+    cTune:Slider({ Title = e[2], Min = 0, Max = 3, Value = 0, Rounding = 2, id = "tune_" .. e[1], Callback = function(v) OVERRIDE[e[1]] = v end })
+end
 
 local cStat = Main:AddCard({ Title = "Status", Icon = "◔", Column = 2 })
 local stLbl = cStat:Label({ Text = "-" })
