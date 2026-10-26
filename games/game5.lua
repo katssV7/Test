@@ -27,9 +27,11 @@ pcall(function() VIM = game:GetService("VirtualInputManager") end)
 local S = {
     aim = false, strength = 40, fov = 150, showFov = true,
     part = "Head", mode = "Always", prio = "Closest to crosshair",
-    predict = 0, sticky = false, team = true, wall = true, maxDist = 1500,
+    predict = 0, sticky = true, team = true, wall = true, maxDist = 1500,
     trig = false, trigDelay = 0.08,
-    esp = false, espName = true, espHealth = true, espDist = true, espTeam = false,
+    autoShoot = true, fireTol = 28, fireDelay = 0.09,
+    espEnemy = false, espTeamOn = false, espHL = true, tracer = true, tracerOrigin = "Bottom", tracerThick = 1.5,
+    espName = true, espHealth = true, espDist = true,
     hitbox = false, hitSize = 6,
     fovChange = false, fovValue = 90,
 }
@@ -148,8 +150,23 @@ local function Held()
     return true
 end
 
+-- ===== TEMBAK =====
+local lastShot = 0
+local function Click()
+    local cam = Cam()
+    local vp = cam and cam.ViewportSize or Vector2.new(800, 600)
+    if typeof(mouse1click) == "function" then pcall(mouse1click) return end
+    if VIM then
+        pcall(function()
+            VIM:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, true, game, 0)
+            VIM:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, false, game, 0)
+        end)
+    end
+end
+
 local targetName = "-"
 local lastT = os.clock()
+local lastAuto = 0
 local function AimStep()
     local now = os.clock()
     local dt = math.clamp(now - lastT, 0.001, 0.1)
@@ -167,6 +184,17 @@ local function AimStep()
     local s = S.strength / 100
     local alpha = (s >= 1) and 1 or (1 - math.exp(-dt * s * s * 45))      -- 100 = langsung kunci
     cam.CFrame = cam.CFrame:Lerp(goal, math.clamp(alpha, 0, 1))
+
+    -- AUTO SHOOT: musuh di dalam lingkaran -> kamera dikunci ke target -> tembak begitu crosshair sudah kena
+    if S.autoShoot and now - lastAuto >= S.fireDelay then
+        local vp = cam.ViewportSize
+        local sp = cam:WorldToViewportPoint(pos)
+        local err = (Vector2.new(sp.X, sp.Y) - Vector2.new(vp.X / 2, vp.Y / 2)).Magnitude
+        if err <= S.fireTol then
+            lastAuto = now
+            Click()
+        end
+    end
 end
 
 local bound = false
@@ -177,18 +205,6 @@ end)
 if not bound then W.Conns[#W.Conns + 1] = RunService.RenderStepped:Connect(AimStep) end
 
 -- ===== TRIGGERBOT =====
-local lastShot = 0
-local function Click()
-    local cam = Cam()
-    local vp = cam and cam.ViewportSize or Vector2.new(800, 600)
-    if typeof(mouse1click) == "function" then pcall(mouse1click) return end
-    if VIM then
-        pcall(function()
-            VIM:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, true, game, 0)
-            VIM:SendMouseButtonEvent(vp.X / 2, vp.Y / 2, 0, false, game, 0)
-        end)
-    end
-end
 W.Conns[#W.Conns + 1] = RunService.Heartbeat:Connect(function()
     if not S.trig or not W.Alive then return end
     if os.clock() - lastShot < S.trigDelay then return end
@@ -207,52 +223,67 @@ W.Conns[#W.Conns + 1] = RunService.Heartbeat:Connect(function()
 end)
 
 -- ===== ESP =====
-local esp = {}   -- [Player] = { hl, bb, lbl, char }
+-- musuh = merah, tim = biru. Garis (tracer) menuju badan, nama di atas kepala.
+local COL_ENEMY = Color3.fromRGB(255, 60, 60)
+local COL_TEAM  = Color3.fromRGB(70, 140, 255)
+local esp = {}   -- [Player] = { hl, bb, lbl, line, char }
+
+local function IsTeammate(p)
+    return p.Team ~= nil and LP.Team ~= nil and p.Team == LP.Team
+end
+
 local function EspRemove(p)
     local e = esp[p]
     if not e then return end
-    pcall(function() e.hl:Destroy() end)
-    pcall(function() e.bb:Destroy() end)
+    for _, k in ipairs({ "hl", "bb", "line" }) do pcall(function() e[k]:Destroy() end) end
     esp[p] = nil
 end
 
-local function EspUpdate()
-    local cam = Cam()
+local function EspNew(c)
+    local e = { char = c }
+    local hl = Instance.new("Highlight")
+    hl.Adornee = c
+    hl.FillTransparency = 0.65
+    hl.OutlineTransparency = 0
+    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    hl.Parent = W.Gui
+    local bb = Instance.new("BillboardGui")
+    bb.Adornee = c:FindFirstChild("Head") or c:FindFirstChild("HumanoidRootPart")
+    bb.Size = UDim2.fromOffset(180, 34)
+    bb.StudsOffset = Vector3.new(0, 2.4, 0)
+    bb.AlwaysOnTop = true
+    bb.Parent = W.Gui
+    local lbl = Instance.new("TextLabel")
+    lbl.BackgroundTransparency = 1
+    lbl.Size = UDim2.fromScale(1, 1)
+    lbl.Font = Enum.Font.GothamBold
+    lbl.TextSize = 13
+    lbl.TextStrokeTransparency = 0.3
+    lbl.Text = ""
+    lbl.Parent = bb
+    local line = Instance.new("Frame")
+    line.AnchorPoint = Vector2.new(0.5, 0.5)
+    line.BorderSizePixel = 0
+    line.Visible = false
+    line.Size = UDim2.fromOffset(0, 2)
+    line.Parent = W.Gui
+    e.hl, e.bb, e.lbl, e.line = hl, bb, lbl, line
+    return e
+end
+
+local function EspUpdate()      -- bikin/hapus objek + isi teks (5x per detik)
     local myRoot = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= LP then
             local c, h = Alive(p)
-            local show = S.esp and c ~= nil and (Enemy(p) or S.espTeam)
+            local team = IsTeammate(p)
+            local show = c ~= nil and ((team and S.espTeamOn) or (not team and S.espEnemy))
             local e = esp[p]
             if e and (not show or e.char ~= c) then EspRemove(p); e = nil end
             if show then
-                if not e then
-                    local hl = Instance.new("Highlight")
-                    hl.Adornee = c
-                    hl.FillTransparency = 0.6
-                    hl.OutlineTransparency = 0
-                    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                    hl.Parent = W.Gui
-                    local bb = Instance.new("BillboardGui")
-                    bb.Adornee = c:FindFirstChild("Head") or c:FindFirstChild("HumanoidRootPart")
-                    bb.Size = UDim2.fromOffset(160, 34)
-                    bb.StudsOffset = Vector3.new(0, 2.6, 0)
-                    bb.AlwaysOnTop = true
-                    bb.Parent = W.Gui
-                    local lbl = Instance.new("TextLabel")
-                    lbl.BackgroundTransparency = 1
-                    lbl.Size = UDim2.fromScale(1, 1)
-                    lbl.Font = Enum.Font.GothamBold
-                    lbl.TextSize = 12
-                    lbl.TextStrokeTransparency = 0.4
-                    lbl.TextColor3 = Color3.new(1, 1, 1)
-                    lbl.Text = ""
-                    lbl.Parent = bb
-                    e = { hl = hl, bb = bb, lbl = lbl, char = c }
-                    esp[p] = e
-                end
-                local enemy = Enemy(p)
-                local col = enemy and Color3.fromRGB(255, 70, 70) or Color3.fromRGB(80, 220, 120)
+                if not e then e = EspNew(c); esp[p] = e end
+                local col = team and COL_TEAM or COL_ENEMY
+                e.hl.Enabled = S.espHL
                 e.hl.FillColor = col
                 e.hl.OutlineColor = col
                 local parts = {}
@@ -265,11 +296,43 @@ local function EspUpdate()
                 e.lbl.Text = table.concat(parts, "  ·  ")
                 e.lbl.TextColor3 = col
                 e.bb.Enabled = #parts > 0
+                e.line.BackgroundColor3 = col
             end
         end
     end
     for p in pairs(esp) do
         if not p.Parent then EspRemove(p) end
+    end
+end
+
+local function EspLines()       -- garis tracer dari tepi layar ke badan (tiap frame)
+    local cam = Cam()
+    if not cam then return end
+    local vp = cam.ViewportSize
+    local from
+    if S.tracerOrigin == "Center" then from = Vector2.new(vp.X / 2, vp.Y / 2)
+    elseif S.tracerOrigin == "Top" then from = Vector2.new(vp.X / 2, 0)
+    else from = Vector2.new(vp.X / 2, vp.Y) end
+    for _, e in pairs(esp) do
+        local line = e.line
+        local c = e.char
+        local body = c and (c:FindFirstChild("UpperTorso") or c:FindFirstChild("Torso") or c:FindFirstChild("HumanoidRootPart"))
+        if S.tracer and body then
+            local sp, on = cam:WorldToViewportPoint(body.Position)
+            if on and sp.Z > 0 then
+                local to = Vector2.new(sp.X, sp.Y)
+                local d = to - from
+                local len = d.Magnitude
+                line.Position = UDim2.fromOffset((from.X + to.X) / 2, (from.Y + to.Y) / 2)
+                line.Size = UDim2.fromOffset(len, S.tracerThick)
+                line.Rotation = math.deg(math.atan2(d.Y, d.X))
+                line.Visible = true
+            else
+                line.Visible = false
+            end
+        else
+            line.Visible = false
+        end
     end
 end
 
@@ -326,7 +389,10 @@ task.spawn(function()
         task.wait(0.2)
     end
 end)
-W.Conns[#W.Conns + 1] = RunService.RenderStepped:Connect(function() if S.fovChange then pcall(FovUpdate) end end)
+W.Conns[#W.Conns + 1] = RunService.RenderStepped:Connect(function()
+    if S.fovChange then pcall(FovUpdate) end
+    pcall(EspLines)
+end)
 
 -- ===== UI =====
 local HomePage = W:AddPage({ Name = "Home", Icon = "⌂" })
@@ -339,11 +405,14 @@ local tog_aim = cAim:Toggle({ Title = "Aimbot", id = "aim", Callback = function(
 cAim:Slider({ Title = "Aim Strength", Min = 1, Max = 100, Value = 40, Suffix = "%", id = "aim_strength", Callback = function(v) S.strength = v end })
 cAim:Slider({ Title = "FOV Radius", Min = 20, Max = 600, Value = 150, id = "aim_fov", Callback = function(v) S.fov = v end })
 cAim:Toggle({ Title = "Show FOV Circle", Value = true, id = "aim_showfov", Callback = function(v) S.showFov = v end })
+cAim:Toggle({ Title = "Auto Shoot (musuh di lingkaran)", Value = true, id = "aim_auto", Callback = function(v) S.autoShoot = v end })
+cAim:Slider({ Title = "Fire Accuracy (px)", Min = 4, Max = 120, Value = 28, id = "aim_tol", Callback = function(v) S.fireTol = v end })
+cAim:Slider({ Title = "Fire Delay (s)", Min = 0, Max = 0.6, Value = 0.09, Rounding = 2, id = "aim_firedelay", Callback = function(v) S.fireDelay = v end })
 cAim:Dropdown({ Title = "Aim Part", List = PARTS, Value = "Head", id = "aim_part", Callback = function(v) S.part = v or "Head" end })
 cAim:Dropdown({ Title = "Aim Mode", List = MODES, Value = "Always", id = "aim_mode", Callback = function(v) S.mode = v or "Always" end })
 cAim:Dropdown({ Title = "Target Priority", List = PRIOS, Value = "Closest to crosshair", id = "aim_prio", Callback = function(v) S.prio = v or PRIOS[1] end })
 cAim:Slider({ Title = "Prediction", Min = 0, Max = 0.3, Value = 0, Rounding = 2, id = "aim_predict", Callback = function(v) S.predict = v end })
-cAim:Toggle({ Title = "Sticky Target", id = "aim_sticky", Callback = function(v) S.sticky = v; Current = nil end })
+cAim:Toggle({ Title = "Sticky Target", Value = true, id = "aim_sticky", Callback = function(v) S.sticky = v; Current = nil end })
 cAim:Keybind({ Title = "Aimbot Key", Value = Enum.KeyCode.Unknown, id = "aim_key", Callback = function() tog_aim:Set(not tog_aim:Get()) end })
 
 local cChk = Main:AddCard({ Title = "Checks", Icon = "✓", Column = 1 })
@@ -357,11 +426,15 @@ cTrig:Toggle({ Title = "Triggerbot", id = "trig", Callback = function(v) S.trig 
 cTrig:Slider({ Title = "Shoot Delay (s)", Min = 0, Max = 0.5, Value = 0.08, Rounding = 2, id = "trig_delay", Callback = function(v) S.trigDelay = v end })
 
 local cEsp = Main:AddCard({ Title = "ESP", Icon = "◉", Column = 2 })
-cEsp:Toggle({ Title = "ESP (Highlight)", id = "esp", Callback = function(v) S.esp = v; OnOff("ESP", v) end })
-cEsp:Toggle({ Title = "Names", Value = true, id = "esp_name", Callback = function(v) S.espName = v end })
+cEsp:Toggle({ Title = "ESP Enemy (merah)", id = "esp_enemy", Callback = function(v) S.espEnemy = v; OnOff("ESP Enemy", v) end })
+cEsp:Toggle({ Title = "ESP Team (biru)", id = "esp_team", Callback = function(v) S.espTeamOn = v; OnOff("ESP Team", v) end })
+cEsp:Toggle({ Title = "Tracer Line", Value = true, id = "esp_tracer", Callback = function(v) S.tracer = v end })
+cEsp:Dropdown({ Title = "Tracer From", List = { "Bottom", "Center", "Top" }, Value = "Bottom", id = "esp_origin", Callback = function(v) S.tracerOrigin = v or "Bottom" end })
+cEsp:Slider({ Title = "Tracer Thickness", Min = 1, Max = 5, Value = 1.5, Rounding = 1, id = "esp_thick", Callback = function(v) S.tracerThick = v end })
+cEsp:Toggle({ Title = "Highlight Body", Value = true, id = "esp_hl", Callback = function(v) S.espHL = v end })
+cEsp:Toggle({ Title = "Name (atas kepala)", Value = true, id = "esp_name", Callback = function(v) S.espName = v end })
 cEsp:Toggle({ Title = "Health", Value = true, id = "esp_health", Callback = function(v) S.espHealth = v end })
 cEsp:Toggle({ Title = "Distance", Value = true, id = "esp_dist", Callback = function(v) S.espDist = v end })
-cEsp:Toggle({ Title = "Show Teammates", id = "esp_team", Callback = function(v) S.espTeam = v end })
 
 local cHit = Main:AddCard({ Title = "Hitbox", Icon = "▣", Column = 2 })
 cHit:Toggle({ Title = "Hitbox Expander", id = "hitbox", Callback = function(v) S.hitbox = v; OnOff("Hitbox Expander", v) end })
