@@ -7,6 +7,7 @@ local Games = {
     [91296119701853] = "games/game2.lua",    -- game kedua (Fishing)
     [79389059854988] = "games/game3.lua",    -- My Anime Mine
     [76427490154192] = "games/game4.lua",   -- Lonely
+    [84556640895285] = "games/game5.lua",   -- Deagle Arena
 }
 
 local path = Games[game.PlaceId]
