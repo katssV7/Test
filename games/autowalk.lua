@@ -518,4 +518,10 @@ for _, step in ipairs({
     local ok, err = pcall(step)
     if not ok then
         warn("[KatssinnnHub] UI error: " .. tostring(err))
-        N("UI error", tostring(e
+        N("UI error", tostring(err), "#DC3232", 10)
+    end
+end
+ 
+W:SelectPage("Main")
+W:Ready()      -- jalankan nilai awal + autoload config setelah intro selesai
+W:OnBooted(function() N("KatssinnnHub", "Auto Walk dimuat  ·  RCtrl untuk buka/tutup", "#50C864", 4) end)
