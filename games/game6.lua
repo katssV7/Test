@@ -212,12 +212,180 @@ local function Bag()
     if a and b then Stats.bag = a .. "/" .. b; return a, b end
 end
 
+-- ===== MINI GAME: ReelGui (jarum berputar + busur putih "Arc" dengan ujung Cap1/Cap2) =====
+-- Cara kerja: sudut busur dihitung dari posisi Cap1 & Cap2 terhadap pusat Circle; sudut jarum dari elemen yang
+-- bergerak mengelilingi lingkaran (dicari otomatis, atau dari nama seperti Needle/Pointer). Saat jarum
+-- melewati titik tembak di dalam busur, ReelBeat dikirim dengan waktu server (sama seperti klik manusia).
+local RunService = game:GetService("RunService")
+local PREC, LEAD_MS = 0, 0          -- PREC: 0 = tengah busur, 1 = tepi; LEAD_MS: kompensasi latensi (ms)
+OPT.reelFallback = true
+local R = { circle = nil, list = {}, listT = 0, motion = {}, needle = nil, prevA = nil, omega = 0,
+            fired = false, firedS = nil, lastFire = 0, activeSince = nil, info = "-" }
+local SKIP = { arc = 1, arcoutline = 1, cap1 = 1, cap2 = 1, capo1 = 1, capo2 = 1, glow = 1, pulse = 1,
+               deadeyerim = 1, combofloat = 1, extralife = 1, hearts = 1 }
+local NEEDLE_PAT = { "needle", "pointer", "indicator", "hand", "marker", "spinner", "sweep", "cursor" }
+
+local function GCenter(o) return o.AbsolutePosition + o.AbsoluteSize / 2 end
+local function AngleFrom(c, p)       -- derajat searah jarum jam dari atas (0..360)
+    local d = p - c
+    return math.deg(math.atan2(d.X, -d.Y)) % 360
+end
+local function Alpha(o)              -- elemen benar-benar terlihat (tidak transparan penuh)?
+    if not o then return false end
+    if o:IsA("ImageLabel") or o:IsA("ImageButton") then
+        if o.ImageTransparency < 0.95 then return true end
+    end
+    if o.BackgroundTransparency < 0.95 then return true end
+    for _, c in ipairs(o:GetChildren()) do
+        if c:IsA("UIStroke") and c.Enabled and c.Transparency < 0.95 then return true end
+    end
+    return false
+end
+
+local function RefreshReel()
+    local g = PG:FindFirstChild("ReelGui")
+    if not g then R.circle = nil; return false end
+    local circle = g:FindFirstChild("Circle", true)
+    R.circle = circle
+    if os.clock() - R.listT > 0.5 then
+        R.listT = os.clock()
+        R.list = {}
+        for _, d in ipairs(g:GetDescendants()) do if d:IsA("GuiObject") then R.list[#R.list + 1] = d end end
+        R.arc, R.c1, R.c2 = g:FindFirstChild("Arc", true), g:FindFirstChild("Cap1", true), g:FindFirstChild("Cap2", true)
+        R.named = nil
+        for _, d in ipairs(R.list) do
+            local n = d.Name:lower()
+            if d ~= circle and not SKIP[n] then
+                for _, p in ipairs(NEEDLE_PAT) do
+                    if n:find(p, 1, true) then R.named = d; break end
+                end
+            end
+            if R.named then break end
+        end
+    end
+    return circle ~= nil
+end
+
 local function ReelActive()
-    local lbl = FindLabel("tap", function(d)
-        local t = d.Text:upper():gsub("%s+", "")
-        return t == "TAP"
-    end)
-    return lbl ~= nil and Shown(lbl)
+    if not RefreshReel() then return false end
+    local c = R.circle
+    return c ~= nil and Shown(c) and c.AbsoluteSize.X > 20
+end
+
+local function AngleOf(o, cc, rad)    -- posisi mengelilingi pusat; kalau di pusat pakai rotasinya
+    local c = GCenter(o)
+    if (c - cc).Magnitude > rad * 0.15 then return AngleFrom(cc, c) end
+    return o.AbsoluteRotation % 360
+end
+
+local function TrackMotion(cc, rad)
+    for _, o in ipairs(R.list) do
+        local n = o.Name:lower()
+        if o ~= R.circle and not SKIP[n] and o.AbsoluteSize.X < rad * 1.4 and Shown(o) then
+            local a = AngleOf(o, cc, rad)
+            local m = R.motion[o]
+            if not m then
+                R.motion[o] = { a = a, acc = 0 }
+            else
+                local d = math.abs(((a - m.a + 180) % 360) - 180)
+                if d < 60 then m.acc += d end        -- abaikan lompatan besar
+                m.a = a
+            end
+        end
+    end
+end
+
+local function PickNeedle()
+    if R.named and R.named.Parent and Shown(R.named) then return R.named end
+    local best, bacc = nil, 25
+    for o, m in pairs(R.motion) do
+        if o.Parent and m.acc > bacc then best, bacc = o, m.acc end
+    end
+    return best
+end
+
+local function ArcRange(cc)
+    local c1, c2 = R.c1, R.c2
+    if not (c1 and c2 and Shown(c1) and Shown(c2) and (Alpha(c1) or Alpha(R.arc))) then return nil end
+    local a1, a2 = AngleFrom(cc, GCenter(c1)), AngleFrom(cc, GCenter(c2))
+    local span = (a2 - a1) % 360
+    local st = a1
+    if span > 180 then st = a2; span = 360 - span end
+    if span < 2 then return nil end
+    return st, span
+end
+
+local function ReelTick(dt)
+    if not OPT.reel then return end
+    if not ReelActive() then
+        R.prevA, R.fired, R.activeSince, R.omega = nil, false, nil, 0
+        R.info = "-"
+        return
+    end
+    local now = os.clock()
+    R.activeSince = R.activeSince or now
+    local cc, rad = GCenter(R.circle), R.circle.AbsoluteSize.X / 2
+
+    if not (R.needle and R.needle.Parent) then R.needle = nil end
+    TrackMotion(cc, rad)
+    if not R.needle then R.needle = PickNeedle() end
+    local needle = R.needle
+    local st, span = ArcRange(cc)
+
+    local a
+    if needle then
+        a = AngleOf(needle, cc, rad)
+        if R.prevA then
+            local d = ((a - R.prevA + 180) % 360) - 180
+            R.omega = R.omega * 0.8 + (d / math.max(dt, 1e-3)) * 0.2
+        end
+        R.prevA = a
+    end
+
+    R.info = string.format("jarum=%s sudut=%s arc=%s w=%.0f°/s", needle and needle.Name or "?", a and string.format("%.0f°", a) or "?",
+        st and string.format("%.0f°+%.0f°", st, span) or "?", R.omega)
+
+    if needle and st and a then
+        local dir = (R.omega >= 0) and 1 or -1
+        local aim = st + span / 2 - dir * PREC * span / 2        -- titik tembak di dalam busur
+        local na = a + R.omega * (LEAD_MS / 1000)                -- kompensasi latensi
+        local rel = ((na - aim + 180) % 360) - 180               -- selisih jarum ke titik tembak
+        if R.firedS and math.abs(((st - R.firedS + 180) % 360) - 180) > 2 then R.fired = false end   -- busur baru
+        if math.abs(rel) > span / 2 + 12 then R.fired = false end                                    -- jarum sudah keluar
+        local tol = math.max(3, math.abs(R.omega) * dt * 2.5)
+        local passed = (rel * dir >= 0) and math.abs(rel) <= tol                                      -- baru saja melewati titik tembak
+        local late = math.abs(rel) <= span / 2 - 2 and rel * dir > 0                                  -- busur muncul saat jarum sudah di dalam
+        if not R.fired and (passed or late) and now - R.lastFire > 0.2 then
+            R.fired, R.firedS, R.lastFire = true, st, now
+            Fire("ReelBeat", Now())
+            Stats.beats += 1
+        end
+    elseif OPT.reelFallback and now - R.activeSince > 2.5 and now - R.lastFire >= REEL_INT then
+        -- deteksi gagal -> cadangan: kirim berkala
+        R.lastFire = now
+        Fire("ReelBeat", Now())
+        Stats.beats += 1
+    end
+end
+RunService.RenderStepped:Connect(function(dt)
+    local ok, err = pcall(ReelTick, math.min(dt, 0.1))
+    if not ok then warn("[Reel] " .. tostring(err)) end
+end)
+
+local function DumpReel()
+    local g = PG:FindFirstChild("ReelGui")
+    if not g then N("Dump ReelGui", "ReelGui tidak ada (masuk mini game dulu)", "#DC3232"); return end
+    local circle = g:FindFirstChild("Circle", true)
+    local cc = circle and GCenter(circle) or Vector2.zero
+    print("===== ReelGui dump =====")
+    for _, d in ipairs(g:GetDescendants()) do
+        if d:IsA("GuiObject") then
+            print(string.format("%s [%s] shown=%s alpha=%s rot=%.1f absrot=%.1f posAngle=%.0f size=%dx%d",
+                (d:GetFullName():gsub("^.-ReelGui", "ReelGui")), d.ClassName, tostring(Shown(d)), tostring(Alpha(d)),
+                d.Rotation, d.AbsoluteRotation, AngleFrom(cc, GCenter(d)), d.AbsoluteSize.X, d.AbsoluteSize.Y))
+        end
+    end
+    N("Dump ReelGui", "Selesai, lihat console (F9)", "#6495ED", 4)
 end
 
 -- ===== IKAN =====
@@ -286,13 +454,8 @@ local function FarmStep(id)
     end
     if now - S.t0 > MAX_DIVE then ExitDive(id) return end
 
-    if OPT.reel and ReelActive() then
+    if ReelActive() then
         Stats.status = "mini game"
-        if now - S.lastReel >= REEL_INT then
-            S.lastReel = now
-            Fire("ReelBeat", Now())
-            Stats.beats += 1
-        end
         return
     end
 
@@ -438,7 +601,10 @@ cFarm:Dropdown({
 
 local cTune = Main:AddCard({ Title = "Tuning", Icon = "wrench", Column = 1, Collapsed = true })
 cTune:Slider({ Title = "Jeda tembak (s)", Min = 0.2, Max = 3, Value = 0.8, Rounding = 2, id = "hf_fire_cd", Callback = function(v) FIRE_CD = v end })
-cTune:Slider({ Title = "Interval ReelBeat (s)", Min = 0.1, Max = 1.5, Value = 0.4, Rounding = 2, id = "hf_reel_int", Callback = function(v) REEL_INT = v end })
+cTune:Slider({ Title = "Titik tembak mini game (0 = tengah, 1 = tepi)", Min = 0, Max = 1, Value = 0, Rounding = 2, id = "hf_reel_prec", Callback = function(v) PREC = v end })
+cTune:Slider({ Title = "Lead latensi mini game (ms)", Min = -150, Max = 300, Value = 0, Rounding = 0, id = "hf_reel_lead", Callback = function(v) LEAD_MS = v end })
+cTune:Toggle({ Title = "Cadangan: kirim ReelBeat berkala kalau deteksi gagal", Value = true, id = "hf_reel_fb", Callback = function(v) OPT.reelFallback = v end })
+cTune:Slider({ Title = "Interval ReelBeat cadangan (s)", Min = 0.1, Max = 1.5, Value = 0.4, Rounding = 2, id = "hf_reel_int", Callback = function(v) REEL_INT = v end })
 cTune:Slider({ Title = "Maks. waktu per dive (s)", Min = 20, Max = 240, Value = 90, Rounding = 0, id = "hf_maxdive", Callback = function(v) MAX_DIVE = v end })
 cTune:Slider({ Title = "Prediksi gerak ikan (lead)", Min = 0, Max = 1, Value = 0, Rounding = 2, id = "hf_lead", Callback = function(v) LEAD = v end })
 cTune:Slider({ Title = "Jarak maks. target ikan", Min = 50, Max = 1500, Value = 600, Rounding = 0, id = "hf_range", Callback = function(v) MAX_RANGE = v end })
@@ -500,6 +666,7 @@ cDbg:Toggle({
         if v then Remote("HarpoonDive") end      -- pastikan RemotesF terisi
     end,
 })
+cDbg:Button({ Title = "Dump ReelGui (print)", Text = "Dump ReelGui (print ke console)", Callback = DumpReel })
 cDbg:Button({
     Title = "Scan ikan (print)", Text = "Scan ikan (print ke console)",
     Callback = function()
@@ -534,6 +701,7 @@ task.spawn(function()
             local txt = "Status: " .. Stats.status ..
                 "\nDive: " .. Stats.trips .. "   Tembak: " .. Stats.shots .. "   Beat: " .. Stats.beats ..
                 "\nTas: " .. Stats.bag .. "   Plot: " .. Stats.plot .. "   Error: " .. Stats.errors
+            if R.info ~= "-" then txt ..= "\nMini game: " .. R.info end
             if logOn and #logLines > 0 then txt ..= "\n— remote terakhir —\n" .. table.concat(logLines, "\n") end
             stLbl:SetText(txt)
         end)
