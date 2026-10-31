@@ -172,22 +172,12 @@ local function NearestEnemy(point)
     end
     return best
 end
-local CurTarget          -- musuh yang sedang diserang
 
 -- ===== FITUR =====
 local clickPulse = NewPulse(function()
     local r = Remote("Train")
     if r then pcall(r.FireServer, r); Stats.clicks += 1 end
 end, 0.1)
-
--- serangan: Cast("attack", posisi musuh) ke musuh yang sedang jadi target Auto Stage
-local attackPulse = NewPulse(function()
-    local e = CurTarget
-    if not EnemyAlive(e) then return end
-    local p = EnemyPos(e)
-    local r = Remote("Cast")
-    if r then pcall(r.FireServer, r, "attack", V3(p.X, p.Y, p.Z)); Stats.attacks += 1 end
-end, 0.2)
 
 local function Rebirth(id)
     task.spawn(function()
@@ -253,12 +243,12 @@ local function TrainStep()
 end
 
 -- ===== AUTO STAGE =====
--- Alur: pilih World + Stage tujuan (N). Untuk stage first..N berurutan:
---   teleport ke titik serang stage -> bunuh semua musuh di workspace.MyEnemies -> lanjut stage berikutnya.
---   Setelah stage N selesai dibunuh, BARU teleport ke claim trophy stage N (stage sebelumnya tidak di-claim).
+-- Pilih World + Stage tujuan (N). Siklus (otomatis berulang dari stage awal):
+--   stage 1: teleport ke titik serang -> attack 3x dalam 1 detik -> stage 2: teleport -> attack 3x dalam 1 detik -> ... -> stage N
+--   setelah stage N: teleport ke claim trophy stage N (hanya stage tujuan), tunggu 1 detik, lalu mulai lagi dari stage 1.
+-- Arah attack = musuh terdekat di workspace.MyEnemies; kalau tidak ada musuh, ke titik serang stage itu.
 local WORLD, STAGE_END = "World 1", 1
-local S_CLAIM, S_LOOP = true, true
-local SPAWN_WAIT, CLEAR_GRACE, STAGE_MAX, STAY, CLAIM_STAY, CYCLE_GAP = 4, 1.5, 120, 25, 3, 2
+local STAGE_WAIT, ATTACK_SPAM = 1, 3
 local tgStage, tgTrain      -- toggle (diisi di bagian UI)
 
 local function FirePromptsNear(pos)       -- kalau claim memakai ProximityPrompt, ikut ditekan
@@ -276,9 +266,24 @@ local function StageOff()
     task.defer(function() if tgStage then tgStage:Set(false) end end)
 end
 
+-- attack ATTACK_SPAM kali, tersebar rata dalam STAGE_WAIT detik
+local function AttackBurst(id, point)
+    local gap = STAGE_WAIT / ATTACK_SPAM
+    for _ = 1, ATTACK_SPAM do
+        if runId.stage ~= id then return false end
+        local p = point
+        local e = NearestEnemy(point)
+        if e then p = EnemyPos(e) end
+        local r = Remote("Cast")
+        if r then pcall(r.FireServer, r, "attack", V3(p.X, p.Y, p.Z)); Stats.attacks += 1 end
+        task.wait(gap)
+    end
+    return runId.stage == id
+end
+
 local function RunStages(id)
     local wd = WORLDS[WORLD]
-    if not wd then return end
+    if not wd then StageOff() return end
     local last = math.clamp(STAGE_END, wd.first, wd.last)
     for st = wd.first, last do
         if runId.stage ~= id then return end
@@ -289,45 +294,22 @@ local function RunStages(id)
             return
         end
         Stats.stage = string.format("%s · Stage %d (serang)", WORLD, st)
-        TP(ap)
-        task.wait(0.4)
-        local t0, lastEnemy, seen = os.clock(), os.clock(), false
-        while runId.stage == id do
-            local hrp = Root()
-            if hrp then
-                if (hrp.Position - ap).Magnitude > STAY then TP(ap) end      -- kembali kalau terdorong jauh / mati
-                local e = NearestEnemy(ap)
-                if e then
-                    CurTarget, seen, lastEnemy = e, true, os.clock()
-                else
-                    CurTarget = nil
-                    local now = os.clock()
-                    if seen and now - lastEnemy >= CLEAR_GRACE then break end            -- semua musuh sudah terbunuh
-                    if not seen and now - t0 >= SPAWN_WAIT then break end              -- tidak ada musuh muncul
-                end
-                if os.clock() - t0 > STAGE_MAX then break end                          -- terlalu lama, lanjut
-            end
-            task.wait(0.1)
-        end
-        CurTarget = nil
+        if not TP(ap) then task.wait(0.5) return end
+        if not AttackBurst(id, ap) then return end
     end
     if runId.stage ~= id then return end
 
-    -- stage tujuan sudah selesai -> claim trophy stage tujuan
-    if S_CLAIM then
-        local cp = wd.claim[last]
-        if cp then
-            Stats.stage = string.format("%s · Stage %d (claim trophy)", WORLD, last)
-            TP(cp)
-            FirePromptsNear(cp)
-            local t = 0
-            while t < CLAIM_STAY and runId.stage == id do t += task.wait(0.1) end
-        else
-            N("Auto Stage", "Waypoint claim " .. WORLD .. " Stage " .. last .. " belum diisi", "#FFA500", 4)
-        end
+    -- stage tujuan selesai -> claim trophy stage tujuan, tunggu 1 detik, lalu siklus mulai lagi dari stage awal
+    local cp = wd.claim[last]
+    if cp then
+        Stats.stage = string.format("%s · Stage %d (claim trophy)", WORLD, last)
+        TP(cp)
+        FirePromptsNear(cp)
+        local t = 0
+        while t < STAGE_WAIT and runId.stage == id do t += task.wait(0.1) end
+    else
+        N("Auto Stage", "Waypoint claim " .. WORLD .. " Stage " .. last .. " belum diisi", "#FFA500", 4)
     end
-    Stats.stage = "siklus selesai"
-    if not S_LOOP then StageOff() end
 end
 
 -- ===== GOD MODE (jaga darah tetap penuh) =====
@@ -449,53 +431,14 @@ ddStage = cStage:Dropdown({
     end,
 })
 tgStage = cStage:Toggle({
-    Title = "Auto Stage", Desc = "Bunuh musuh stage 1..tujuan, lalu claim trophy", id = "ae_stage_on", Expand = true,
+    Title = "Auto Stage", Desc = "Serang stage 1..tujuan, claim trophy, ulang otomatis", id = "ae_stage_on",
     Callback = function(v)
         if v and tgTrain and tgTrain.Value then tgTrain:Set(false) end       -- Auto Train & Auto Stage sama-sama teleport
-        attackPulse.on = v
-        attackPulse.acc = 0
-        CurTarget = nil
-        Loop("stage", v, function() return CYCLE_GAP end, RunStages)
+        Loop("stage", v, function() return 0.1 end, RunStages)
         if not v then Stats.stage = "-" end
         N("Auto Stage", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
     end,
 })
-tgStage:Sub(function(c)
-    c:Slider({
-        Title = "Kecepatan attack (jeda detik, terkecil 0.01)", Min = 0.01, Max = 2, Value = 0.2, Rounding = 2, Suffix = "s", id = "ae_attack_speed",
-        Callback = function(v) attackPulse.int = math.max(v, 0.01) end,
-    })
-    c:Toggle({ Title = "Claim trophy di stage tujuan", Value = true, id = "ae_stage_claim", Callback = function(v) S_CLAIM = v end })
-    c:Toggle({ Title = "Ulangi terus (loop)", Value = true, id = "ae_stage_loop", Callback = function(v) S_LOOP = v end })
-    c:Slider({
-        Title = "Tunggu musuh muncul (s)", Min = 1, Max = 15, Value = 4, Rounding = 1, Suffix = "s", id = "ae_stage_spawn",
-        Callback = function(v) SPAWN_WAIT = v end,
-    })
-    c:Slider({
-        Title = "Jeda setelah musuh habis (s)", Min = 0.3, Max = 6, Value = 1.5, Rounding = 1, Suffix = "s", id = "ae_stage_grace",
-        Callback = function(v) CLEAR_GRACE = v end,
-    })
-    c:Slider({
-        Title = "Jarak musuh dari titik serang", Min = 30, Max = 600, Value = 200, Rounding = 0, id = "ae_stage_radius",
-        Callback = function(v) RADIUS = v end,
-    })
-    c:Slider({
-        Title = "Batas waktu per stage (s)", Min = 20, Max = 600, Value = 120, Rounding = 0, Suffix = "s", id = "ae_stage_max",
-        Callback = function(v) STAGE_MAX = v end,
-    })
-    c:Slider({
-        Title = "Jarak sebelum teleport ulang", Min = 5, Max = 80, Value = 25, Rounding = 0, id = "ae_stage_stay",
-        Callback = function(v) STAY = v end,
-    })
-    c:Button({
-        Title = "Tes teleport claim", Text = "Tes teleport ke claim trophy stage tujuan",
-        Callback = function()
-            local wd = WORLDS[WORLD]
-            local p = wd and wd.claim[STAGE_END]
-            if p then TP(p); N("Teleport", WORLD .. " Stage " .. STAGE_END .. " (claim)", "#6495ED") else N("Teleport", "Waypoint belum diisi", "#DC3232") end
-        end,
-    })
-end)
 
 local cGod = Main:AddCard({ Title = "Survival", Icon = "shield", Column = 1 })
 cGod:Toggle({
@@ -578,7 +521,6 @@ end)
 W:OnUnload(function()
     logOn = false
     godOn = false
-    CurTarget = nil
     GodState(false)
     for _, p in ipairs(pulses) do p.on = false end
     for k in pairs(runId) do runId[k] += 1 end
