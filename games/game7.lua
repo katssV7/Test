@@ -1,7 +1,7 @@
 -- KatssinnnHub | Game 7 (Anime Eyes)
 -- Sidebar: Home / Main / Player / Settings (library: ui.lua)
 -- Fitur: Auto Click, Auto Train (teleport sesuai rebirth), Auto Stage (serang musuh di MyEnemies per stage -> claim trophy),
---        God Mode, Auto Rebirth, Auto Equip Best Pet, Remote Logger.
+--        Redeem Codes, Auto Rebirth, Auto Equip Best Pet, Remote Logger.
 local BASE = "https://raw.githubusercontent.com/katssV7/Test/refs/heads/main/"
 local UI = loadstring(game:HttpGet(BASE .. "ui.lua"))()
 
@@ -23,7 +23,7 @@ local RunService = game:GetService("RunService")
 local LP = Players.LocalPlayer
 
 -- ===== LOOP LAMBAT (rebirth, equip pet) =====
-local runId = { rebirth = 0, equip = 0, train = 0, stage = 0, godenemy = 0 }
+local runId = { rebirth = 0, equip = 0, train = 0, stage = 0 }
 local function Loop(key, enabled, getDelay, fn)
     runId[key] += 1
     if not enabled then return end
@@ -97,11 +97,10 @@ end
 -- ===== KARAKTER =====
 local function Root() local c = LP.Character; return c and c:FindFirstChild("HumanoidRootPart") end
 
-local GOD_LIFT = 0     -- diisi metode God "Melayang tinggi": semua teleport ditinggikan sekian stud
 local function TP(pos)
     local hrp = Root()
     if not hrp then return false end
-    hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3 + GOD_LIFT, 0))
+    hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
     pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end)
     return true
 end
@@ -322,133 +321,36 @@ local function RunStages(id)
     end
 end
 
--- ===== GOD MODE: 7 metode terpisah, aktifkan satu per satu untuk mengetes mana yang berfungsi =====
--- Catatan: kalau darah dihitung server, metode yang hanya mengubah sisi client (1,2,3,7) tidak akan menolong.
--- Metode yang paling berpeluang: 4 (musuh tidak sampai), 5 (kalau damage dikirim lewat remote), 6 (kalau musuh disimulasikan di client).
--- Penghitung "mati" di kartu Status membantu: aktifkan 1 metode, biarkan Auto Stage jalan, lihat apakah angka mati bertambah.
-local gm = { hp = false, dead = false, ff = false, lift = false, block = false, enemy = false, hum = false }
-local deaths, blockedCount = 0, 0
-local LIFT_H = 45
-local BLOCK_LIST = { "damage", "hurt", "takedmg" }
-local blockOn = false
-local godConns = {}
-local origDead = setmetatable({}, { __mode = "k" })
-local enemyOrig = setmetatable({}, { __mode = "k" })
-local liftBV
-
-local function GetHum() local c = LP.Character; return c and c:FindFirstChildOfClass("Humanoid") end
-
-local function HpFix()
-    local h = GetHum()
-    if h and h.Health > 0 and h.Health < h.MaxHealth then h.Health = h.MaxHealth end
+-- ===== REDEEM ALL CODES =====
+-- Tambah kode baru cukup dengan menambah namanya di daftar ini.
+local CODES = { "AWAKEN", "SHARINGAN", "UPDATE1", "NEWWORLDS", "1MILLIONVISITS", "UPDATE2", "KURUMA" }
+local redeeming = false
+local codeLines = {}
+local codeLbl
+local function ShowCodes()
+    if codeLbl then codeLbl:SetText(#codeLines > 0 and table.concat(codeLines, "\n") or "-") end
 end
--- metode 1: kunci darah di tiga titik sekaligus supaya secepat mungkin
-W.Conns[#W.Conns + 1] = RunService.Heartbeat:Connect(function()
-    if gm.hp then HpFix() end
-    if gm.lift then
-        local hrp = Root()
-        if hrp and (not liftBV or liftBV.Parent ~= hrp) then
-            if liftBV then pcall(function() liftBV:Destroy() end) end
-            liftBV = Instance.new("BodyVelocity")
-            liftBV.MaxForce = Vector3.new(0, 1e9, 0); liftBV.Velocity = Vector3.zero; liftBV.Parent = hrp
+local function RedeemAll()
+    if redeeming then N("Redeem Codes", "Masih berjalan...", "#FFA500") return end
+    redeeming = true
+    codeLines = {}
+    ShowCodes()
+    task.spawn(function()
+        local good = 0
+        for _, code in ipairs(CODES) do
+            if not W.Alive then break end
+            local ok, res = Call("RedeemCode", code)       -- RemoteFunction -> InvokeServer
+            if ok then good += 1 end
+            local info = (res ~= nil) and tostring(res) or ""
+            if #info > 40 then info = info:sub(1, 40) .. "…" end
+            codeLines[#codeLines + 1] = code .. ": " .. (ok and ("terkirim" .. (info ~= "" and (" · " .. info) or "")) or "gagal")
+            ShowCodes()
+            task.wait(0.5)
         end
-    end
-end)
-W.Conns[#W.Conns + 1] = RunService.Stepped:Connect(function() if gm.hp then HpFix() end end)
-W.Conns[#W.Conns + 1] = RunService.RenderStepped:Connect(function() if gm.hp then HpFix() end end)
-
--- metode 7: ganti objek Humanoid dengan salinannya (trik lama; hasilnya tergantung game)
-local function ReplaceHumanoid()
-    local c, h = LP.Character, GetHum()
-    if not (c and h) then return end
-    local n = h:Clone()
-    h:Destroy()
-    n.Parent = c
-    pcall(function() workspace.CurrentCamera.CameraSubject = n end)
+        redeeming = false
+        N("Redeem Codes", good .. "/" .. #CODES .. " kode terkirim", good == #CODES and "#50C864" or "#FFA500", 4)
+    end)
 end
-
--- pasang ulang metode 1/2/3 + penghitung mati ke karakter yang sekarang
-local function GodApply()
-    local c, h = LP.Character, GetHum()
-    if not (c and h) then return end
-    for _, cn in ipairs(godConns) do pcall(function() cn:Disconnect() end) end
-    godConns = {}
-    godConns[#godConns + 1] = h.Died:Connect(function() deaths += 1 end)
-    godConns[#godConns + 1] = h.HealthChanged:Connect(function() if gm.hp then HpFix() end end)
-    -- metode 2: state mati dimatikan
-    if gm.dead then
-        if origDead[h] == nil then origDead[h] = h.BreakJointsOnDeath end
-        pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.Dead, false) end)
-        pcall(function() h.BreakJointsOnDeath = false end)
-    else
-        pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.Dead, true) end)
-        if origDead[h] ~= nil then pcall(function() h.BreakJointsOnDeath = origDead[h] end); origDead[h] = nil end
-    end
-    -- metode 3: ForceField sisi client
-    local ff = c:FindFirstChild("KH_FF")
-    if gm.ff then
-        if not ff then
-            ff = Instance.new("ForceField"); ff.Name = "KH_FF"; ff.Visible = false; ff.Parent = c
-        end
-    elseif ff then
-        ff:Destroy()
-    end
-end
-
--- metode 4: melayang tinggi (tahan jatuh + semua teleport ditinggikan)
-local function SetLift(on)
-    if on then
-        GOD_LIFT = LIFT_H
-        local hrp = Root()
-        if hrp then hrp.CFrame = hrp.CFrame + Vector3.new(0, LIFT_H, 0) end
-    else
-        GOD_LIFT = 0
-        if liftBV then pcall(function() liftBV:Destroy() end); liftBV = nil end
-    end
-end
-
--- metode 5: blok remote berisi kata tertentu yang dikirim script game ke server (bukan remote buatan script ini)
-local function IsBlocked(name)
-    local l = string.lower(tostring(name))
-    for _, k in ipairs(BLOCK_LIST) do
-        if k ~= "" and string.find(l, k, 1, true) then return true end
-    end
-    return false
-end
-
--- metode 6: lumpuhkan musuh di MyEnemies (di sisi client)
-local function EnemyNeutralize()
-    for _, e in ipairs(EnemyList()) do
-        local parts = e:GetDescendants()
-        parts[#parts + 1] = e
-        for _, d in ipairs(parts) do
-            if d:IsA("BasePart") then
-                if enemyOrig[d] == nil then enemyOrig[d] = { Anchored = d.Anchored, CanTouch = d.CanTouch } end
-                d.Anchored = true; d.CanTouch = false
-            elseif d:IsA("Humanoid") then
-                if enemyOrig[d] == nil then enemyOrig[d] = { WalkSpeed = d.WalkSpeed } end
-                d.WalkSpeed = 0
-            elseif d:IsA("LocalScript") then
-                if enemyOrig[d] == nil then enemyOrig[d] = { Disabled = d.Disabled } end
-                d.Disabled = true
-            end
-        end
-    end
-end
-local function EnemyRestore()
-    for inst, rec in pairs(enemyOrig) do
-        pcall(function() for k, val in pairs(rec) do inst[k] = val end end)
-    end
-    table.clear(enemyOrig)
-end
-
-W.Conns[#W.Conns + 1] = LP.CharacterAdded:Connect(function()
-    task.wait(0.5)
-    if gm.hum then pcall(ReplaceHumanoid) end
-    GodApply()
-    if gm.lift then SetLift(true) end
-end)
-task.spawn(function() task.wait(1); GodApply() end)
 
 -- ===== REMOTE LOGGER (untuk melihat argumen skill lain: Clairvoyant Judgement, Arrow Storm, dll.) =====
 local logOn, logLines, oldNc = false, {}, nil
@@ -464,17 +366,9 @@ local function InstallHook()
     if not (hookmetamethod and getnamecallmethod) then return false end
     local wrap = newcclosure or function(f) return f end
     oldNc = hookmetamethod(game, "__namecall", wrap(function(self, ...)
-        if logOn or blockOn then
+        if logOn then
             local m = getnamecallmethod()
             if (m == "FireServer" or m == "InvokeServer") and typeof(self) == "Instance"
-                and not (checkcaller and checkcaller()) then
-                -- God metode 5: buang remote bernama damage/hurt/... milik script game
-                if blockOn and IsBlocked(self.Name) then
-                    blockedCount += 1
-                    return nil
-                end
-            end
-            if logOn and (m == "FireServer" or m == "InvokeServer") and typeof(self) == "Instance"
                 and RemotesF and self.Parent == RemotesF and not (checkcaller and checkcaller()) then
                 local args = table.pack(...)
                 local nm = self.Name
@@ -573,84 +467,13 @@ tgStage = cStage:Toggle({
     end,
 })
 
--- God Mode: 7 metode terpisah. Aktifkan SATU, jalankan Auto Stage, lihat angka "mati" di kartu Status.
-local cGod = Main:AddCard({ Title = "God Mode (tes satu per satu)", Icon = "shield", Column = 1 })
-local godToggles = {}
-local function GodToggle(key, num, title, desc, onChange, expand)
-    local tg = cGod:Toggle({
-        Title = num .. " · " .. title, Desc = desc, id = "ae_god_" .. key, Expand = expand,
-        Callback = function(v)
-            gm[key] = v
-            local ok, err = pcall(onChange or GodApply, v)
-            if not ok then N("God " .. num, tostring(err), "#DC3232", 6) end
-            N("God " .. num .. " · " .. title, v and "ON" or "OFF", v and "#50C864" or "#DC3232")
-        end,
-    })
-    godToggles[#godToggles + 1] = tg
-    return tg
-end
-
-GodToggle("hp", 1, "Kunci darah", "HP dipulihkan tiap frame")
-GodToggle("dead", 2, "Blok state mati", "Dead state & BreakJoints off")
-GodToggle("ff", 3, "ForceField", "ForceField di karakter (client)")
-local tgLift = GodToggle("lift", 4, "Melayang tinggi", "Menjauh dari musuh (melee)", function(v) SetLift(v) end, true)
-tgLift:Sub(function(c)
-    c:Slider({
-        Title = "Tinggi melayang (stud)", Min = 10, Max = 150, Value = 45, Rounding = 0, id = "ae_god_lifth",
-        Callback = function(v)
-            LIFT_H = v
-            if gm.lift then
-                local d = v - GOD_LIFT
-                GOD_LIFT = v
-                local hrp = Root()
-                if hrp then hrp.CFrame = hrp.CFrame + Vector3.new(0, d, 0) end
-            end
-        end,
-    })
-end)
-local tgBlock = GodToggle("block", 5, "Blok remote damage", "Buang remote bernama damage/hurt",
-    function(v)
-        if v and not InstallHook() then
-            gm.block = false; blockOn = false
-            N("Blok remote", "Executor tidak mendukung hookmetamethod", "#DC3232", 5)
-            return
-        end
-        blockOn = v
-    end, true)
-tgBlock:Sub(function(c)
-    c:Input({
-        Title = "Kata nama remote yang diblok (pisah koma)", Value = "damage,hurt,takedmg", id = "ae_god_blocklist",
-        Callback = function(t)
-            local l = {}
-            for w in tostring(t):gmatch("[^,]+") do
-                w = string.lower(w):gsub("^%s+", ""):gsub("%s+$", "")
-                if w ~= "" then l[#l + 1] = w end
-            end
-            BLOCK_LIST = l
-        end,
-    })
-    c:Label({ Text = "Tips: nyalakan Remote Logger (kartu Debug), kena serang, lihat nama remote-nya, lalu tulis di sini." })
-end)
-GodToggle("enemy", 6, "Lumpuhkan musuh", "Musuh dibekukan & hitbox off (client)",
-    function(v)
-        Loop("godenemy", v, function() return 0.3 end, EnemyNeutralize)
-        if not v then EnemyRestore() end
-    end)
-GodToggle("hum", 7, "Ganti Humanoid (eksperimen)", "Humanoid diganti salinannya",
-    function(v)
-        if v then ReplaceHumanoid() end
-        GodApply()
-    end)
-cGod:Button({
-    Title = "Matikan semua metode", Text = "Matikan semua metode",
-    Callback = function()
-        for _, tg in ipairs(godToggles) do tg:Set(false) end
-    end,
+-- Redeem Codes
+local cCodes = Main:AddCard({ Title = "Redeem Codes", Icon = "gift", Column = 1 })
+cCodes:Button({
+    Title = "Redeem semua kode", Text = "Redeem semua kode (" .. #CODES .. ")",
+    Callback = RedeemAll,
 })
-cGod:Button({
-    Title = "Reset hitungan mati", Text = "Reset hitungan mati",
-    Callback = function() deaths = 0; blockedCount = 0 end,
-})
+codeLbl = cCodes:Label({ Text = "-", Size = 11, Color = "Text" })
 
 -- ---------- kolom 2 ----------
 local cReb = Main:AddCard({ Title = "Rebirth", Icon = "rotate-ccw", Column = 2 })
@@ -712,9 +535,7 @@ task.spawn(function()
             local txt = "Click: " .. Stats.clicks .. "   Attack: " .. Stats.attacks ..
                 "\nRebirth: " .. Stats.rebirths .. "   Equip best: " .. Stats.equips ..
                 "\nStage: " .. Stats.stage .. "   Error: " .. Stats.errors ..
-                "\nZona train: " .. Stats.zone ..
-                "\nGod: HP " .. (function() local h = GetHum(); return h and (math.floor(h.Health) .. "/" .. math.floor(h.MaxHealth)) or "-" end)() ..
-                "   Mati: " .. deaths .. "   Remote diblok: " .. blockedCount
+                "\nZona train: " .. Stats.zone
             if logOn and #logLines > 0 then txt ..= "\n— remote terakhir —\n" .. table.concat(logLines, "\n") end
             stLbl:SetText(txt)
         end)
@@ -724,12 +545,6 @@ end)
 -- hentikan semua saat Unload
 W:OnUnload(function()
     logOn = false
-    blockOn = false
-    for k in pairs(gm) do gm[k] = false end
-    SetLift(false)
-    EnemyRestore()
-    pcall(GodApply)
-    for _, cn in ipairs(godConns) do pcall(function() cn:Disconnect() end) end
     for _, p in ipairs(pulses) do p.on = false end
     for k in pairs(runId) do runId[k] += 1 end
 end)
