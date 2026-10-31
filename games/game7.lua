@@ -23,7 +23,7 @@ local RunService = game:GetService("RunService")
 local LP = Players.LocalPlayer
 
 -- ===== LOOP LAMBAT (rebirth, equip pet) =====
-local runId = { rebirth = 0, equip = 0, train = 0, stage = 0 }
+local runId = { rebirth = 0, equip = 0, train = 0, stage = 0, pop = 0 }
 local function Loop(key, enabled, getDelay, fn)
     runId[key] += 1
     if not enabled then return end
@@ -78,7 +78,7 @@ local function Remote(name)
     return RemotesF and (RemotesF:FindFirstChild(name) or RemotesF:WaitForChild(name, 5))
 end
 
-local Stats = { clicks = 0, attacks = 0, rebirths = 0, equips = 0, errors = 0, stage = "-", zone = "-" }
+local Stats = { clicks = 0, attacks = 0, rebirths = 0, equips = 0, errors = 0, stage = "-", zone = "-", pop = "-", popOk = 0, popTry = 0 }
 
 -- panggil remote sesuai jenisnya (RemoteEvent = FireServer, RemoteFunction = InvokeServer)
 local function Call(name, ...)
@@ -352,6 +352,81 @@ local function RedeemAll()
     end)
 end
 
+-- ===== AUTO CLAIM POP (bubble "x2!") =====
+-- Remote: Pops:FireServer("claim", id). Server tidak membalas, jadi "diterima" dideteksi dari GUI pop yang hilang:
+--   pop terlihat -> kirim claim dengan ID kandidat -> kalau pop langsung hilang = ID itu diterima, kandidat berikutnya = ID + 1
+--   kalau pop masih ada = ditolak, coba ID + 1 (jadi mulai dari angka awal, naik satu per satu sampai ketemu yang diterima).
+-- ID juga dipelajari dari klik manual: kalau kamu / game memanggil Pops("claim", N), kandidat berikutnya = N + 1.
+local POP_START   = 25
+local POP_CHECK   = 0.1             -- tunggu sekian detik setelah kirim, lalu cek pop hilang atau belum
+local POP_PATTERN = "^x%d+!$"       -- pola teks label pop (huruf kecil, spasi dibuang), contoh "x2!"
+local POP_MAXSCAN = 3000            -- kalau sudah sekian angka ditolak berturut-turut, ulangi dari POP_START
+local popCand, popFails = POP_START, 0
+local popLearn = true
+local popLabel, popScanT = nil, 0
+local popEvt = "-"                  -- argumen terakhir yang dikirim server lewat Pops.OnClientEvent (untuk diagnosa)
+
+local function Shown(d)
+    local pg = LP:FindFirstChildOfClass("PlayerGui")
+    local p = d
+    while p and p ~= pg do
+        if p:IsA("GuiObject") and not p.Visible then return false end
+        if p:IsA("ScreenGui") and not p.Enabled then return false end
+        p = p.Parent
+    end
+    return p == pg
+end
+
+local function PopVisible()
+    if popLabel and popLabel.Parent and Shown(popLabel) then return true end
+    if os.clock() - popScanT < 0.4 then return false end
+    popScanT = os.clock()
+    local pg = LP:FindFirstChildOfClass("PlayerGui")
+    if not pg then return false end
+    for _, d in ipairs(pg:GetDescendants()) do
+        if d:IsA("TextLabel") or d:IsA("TextButton") then
+            local t = d.Text:gsub("<[^>]+>", ""):gsub("%s", ""):lower()
+            local okm, m = pcall(string.match, t, POP_PATTERN)
+            if okm and m and Shown(d) then popLabel = d; return true end
+        end
+    end
+    return false
+end
+
+local function PopStep()
+    if not PopVisible() then
+        Stats.pop = "menunggu pop  (ID berikut: " .. popCand .. ")"
+        return
+    end
+    local cand = popCand
+    local r = Remote("Pops")
+    if not r then Stats.errors += 1; Stats.pop = "remote Pops tidak ada"; return end
+    pcall(r.FireServer, r, "claim", cand)
+    Stats.popTry += 1
+    task.wait(POP_CHECK)
+    popCand = cand + 1
+    if not PopVisible() then
+        Stats.popOk += 1
+        popFails = 0
+        Stats.pop = "diterima ID " .. cand .. "  (berikut: " .. popCand .. ")"
+    else
+        popFails += 1
+        Stats.pop = "mencoba ID " .. cand .. " ..."
+        if popFails >= POP_MAXSCAN then popCand, popFails = POP_START, 0 end
+    end
+end
+
+task.spawn(function()
+    local r = Remote("Pops")
+    if r and r:IsA("RemoteEvent") then
+        W.Conns[#W.Conns + 1] = r.OnClientEvent:Connect(function(...)
+            local t = table.pack(...)
+            for i = 1, t.n do t[i] = tostring(t[i]) end
+            popEvt = table.concat(t, ", ")
+        end)
+    end
+end)
+
 -- ===== REMOTE LOGGER (untuk melihat argumen skill lain: Clairvoyant Judgement, Arrow Storm, dll.) =====
 local logOn, logLines, oldNc = false, {}, nil
 local function Fmt(v)
@@ -366,20 +441,27 @@ local function InstallHook()
     if not (hookmetamethod and getnamecallmethod) then return false end
     local wrap = newcclosure or function(f) return f end
     oldNc = hookmetamethod(game, "__namecall", wrap(function(self, ...)
-        if logOn then
+        if logOn or popLearn then
             local m = getnamecallmethod()
             if (m == "FireServer" or m == "InvokeServer") and typeof(self) == "Instance"
                 and RemotesF and self.Parent == RemotesF and not (checkcaller and checkcaller()) then
                 local args = table.pack(...)
                 local nm = self.Name
-                task.spawn(function()
-                    local parts = {}
-                    for i = 1, args.n do parts[i] = Fmt(args[i]) end
-                    local line = nm .. "(" .. table.concat(parts, ", ") .. ")"
-                    print("[RemoteLog] " .. line)
-                    logLines[#logLines + 1] = line
-                    if #logLines > 6 then table.remove(logLines, 1) end
-                end)
+                -- belajar ID pop: klaim manual (dari game) Pops("claim", N) -> kandidat berikutnya N + 1
+                if popLearn and nm == "Pops" and args[1] == "claim" and type(args[2]) == "number" then
+                    popCand = args[2] + 1
+                    popFails = 0
+                end
+                if logOn then
+                    task.spawn(function()
+                        local parts = {}
+                        for i = 1, args.n do parts[i] = Fmt(args[i]) end
+                        local line = nm .. "(" .. table.concat(parts, ", ") .. ")"
+                        print("[RemoteLog] " .. line)
+                        logLines[#logLines + 1] = line
+                        if #logLines > 6 then table.remove(logLines, 1) end
+                    end)
+                end
             end
         end
         return oldNc(self, ...)
@@ -429,6 +511,51 @@ tgTrain:Sub(function(c)
     c:Slider({
         Title = "Jarak sebelum teleport ulang", Min = 3, Max = 60, Value = 12, Rounding = 0, id = "ae_train_stay",
         Callback = function(v) TRAIN_STAY = v end,
+    })
+end)
+
+-- Auto Claim Pop: tepat di bawah Auto Train
+local tgPop = cClick:Toggle({
+    Title = "Auto Claim Pop (x2!)", id = "ae_pop", Expand = true,
+    Callback = function(v)
+        Loop("pop", v, function() return 0.02 end, PopStep)
+        if not v then Stats.pop = "-" end
+        N("Auto Claim Pop", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
+    end,
+})
+tgPop:Sub(function(c)
+    c:Input({
+        Title = "Mulai dari ID", Value = "25", id = "ae_pop_start",
+        Callback = function(t)
+            local n = tonumber(t)
+            if n then POP_START = math.floor(n); popCand = POP_START; popFails = 0 end
+        end,
+    })
+    c:Slider({
+        Title = "Jeda cek tiap angka (s)", Min = 0.05, Max = 0.5, Value = 0.1, Rounding = 2, Suffix = "s", id = "ae_pop_check",
+        Callback = function(v) POP_CHECK = v end,
+    })
+    c:Input({
+        Title = "Pola teks pop (Lua pattern)", Value = "^x%d+!$", id = "ae_pop_pattern",
+        Callback = function(t)
+            t = tostring(t or ""):gsub("^%s+", ""):gsub("%s+$", "")
+            if t ~= "" then POP_PATTERN = t; popLabel = nil; popScanT = 0 end
+        end,
+    })
+    c:Toggle({
+        Title = "Pelajari ID dari klaim manual", Value = true, id = "ae_pop_learn",
+        Callback = function(v)
+            if v and not InstallHook() then
+                popLearn = false
+                N("Auto Claim Pop", "Executor tanpa hookmetamethod: ID tidak bisa dipelajari dari klaim manual", "#FFA500", 5)
+                return
+            end
+            popLearn = v
+        end,
+    })
+    c:Button({
+        Title = "Reset ke ID awal", Text = "Reset ke ID awal",
+        Callback = function() popCand, popFails = POP_START, 0; N("Auto Claim Pop", "ID kembali ke " .. POP_START, "#6495ED") end,
     })
 end)
 
@@ -535,7 +662,9 @@ task.spawn(function()
             local txt = "Click: " .. Stats.clicks .. "   Attack: " .. Stats.attacks ..
                 "\nRebirth: " .. Stats.rebirths .. "   Equip best: " .. Stats.equips ..
                 "\nStage: " .. Stats.stage .. "   Error: " .. Stats.errors ..
-                "\nZona train: " .. Stats.zone
+                "\nZona train: " .. Stats.zone ..
+                "\nPop: " .. Stats.pop .. "   diterima: " .. Stats.popOk .. "/" .. Stats.popTry ..
+                "\nPops dari server: " .. popEvt
             if logOn and #logLines > 0 then txt ..= "\n— remote terakhir —\n" .. table.concat(logLines, "\n") end
             stLbl:SetText(txt)
         end)
