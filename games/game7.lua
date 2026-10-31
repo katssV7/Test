@@ -361,7 +361,9 @@ local GuiService = game:GetService("GuiService")
 local VIM
 pcall(function() VIM = game:GetService("VirtualInputManager") end)
 
-local POP_MODE   = "Sinyal + mouse"   -- "Sinyal + mouse" | "Sinyal + touch" | "Mouse" | "Touch" | "Sinyal saja"
+local POP_MODE   = "Sinyal + touch"   -- "Sinyal + touch" | "Touch" | "Sinyal saja" | "Sinyal + mouse" | "Mouse"
+-- PENTING (HP): mode berawalan "Mouse" mengirim input mouse sehingga Roblox mengira kamu pakai PC (joystick & tombol lompat hilang).
+-- Pakai "Sinyal + touch" / "Touch" / "Sinyal saja": tidak ada input mouse sama sekali.
 local POP_SETTLE = 0.25               -- pop harus sudah tampil selama ini sebelum diklik (animasi muncul selesai)
 local POP_RETRY  = 0.6                -- kalau pop masih ada, klik lagi setelah jeda ini
 local POP_YOFF   = 0                  -- koreksi manual posisi Y klik (px) kalau klik meleset
@@ -416,11 +418,26 @@ local function CenterOf(g)
     return x, y + POP_YOFF
 end
 
-local function FireSignals(btn)
-    if typeof(firesignal) ~= "function" then return false end
-    local a = pcall(firesignal, btn.MouseButton1Click)
-    local b = pcall(firesignal, btn.Activated)
-    return a or b
+local SIG_NAMES = { "MouseButton1Down", "MouseButton1Click", "MouseButton1Up", "Activated", "TouchTap" }
+local function FireSignals(btn)      -- memicu event tombol langsung di script game, tanpa input apa pun
+    local any = false
+    for _, nm in ipairs(SIG_NAMES) do
+        local okS, sig = pcall(function() return btn[nm] end)
+        if okS and sig then
+            local fired = false
+            if typeof(firesignal) == "function" then fired = pcall(firesignal, sig) end
+            if not fired and typeof(getconnections) == "function" then
+                local okc, cons = pcall(getconnections, sig)
+                if okc and type(cons) == "table" then
+                    for _, cn in ipairs(cons) do
+                        if pcall(function() cn:Fire() end) then fired = true end
+                    end
+                end
+            end
+            if fired then any = true end
+        end
+    end
+    return any
 end
 local function MouseClick(x, y)
     if not VIM then return false end
@@ -431,12 +448,15 @@ local function MouseClick(x, y)
     end)
     return true
 end
-local function TouchClick(x, y)
+local touchN = 0
+local function TouchClick(x, y)        -- ketukan jari virtual: Roblox tetap mengira kamu di HP (kontrol HP tidak hilang)
     if not VIM then return false end
+    touchN += 1
+    local id = 90 + (touchN % 5)       -- id jari virtual, dibuat jauh dari id jari asli
     pcall(function()
-        VIM:SendTouchEvent(1, 0, x, y)
-        task.wait(0.04)
-        VIM:SendTouchEvent(1, 2, x, y)
+        VIM:SendTouchEvent(id, 0, x, y)     -- jari menyentuh
+        task.wait(0.05)
+        VIM:SendTouchEvent(id, 2, x, y)     -- jari diangkat
     end)
     return true
 end
@@ -482,7 +502,7 @@ local function PopStep()
             end
         end
     end
-    if active == 0 then Stats.pop = "menunggu pop muncul di Pops" end
+     if active == 0 then Stats.pop = "menunggu pop muncul di Pops" end
 end
 
 -- ===== REMOTE LOGGER (untuk melihat argumen skill lain: Clairvoyant Judgement, Arrow Storm, dll.) =====
@@ -576,8 +596,8 @@ local tgPop = cClick:Toggle({
 })
 tgPop:Sub(function(c)
     c:Dropdown({
-        Title = "Cara klik", List = { "Sinyal + mouse", "Sinyal + touch", "Mouse", "Touch", "Sinyal saja" },
-        Value = "Sinyal + mouse", id = "ae_pop_mode",
+        Title = "Cara klik", List = { "Sinyal + touch", "Touch", "Sinyal saja", "Sinyal + mouse", "Mouse" },
+        Value = "Sinyal + touch", id = "ae_pop_mode",
         Callback = function(v) if v then POP_MODE = tostring(v) end end,
     })
     c:Slider({
@@ -588,6 +608,7 @@ tgPop:Sub(function(c)
         Title = "Koreksi posisi Y klik (px)", Min = -120, Max = 120, Value = 0, Rounding = 0, id = "ae_pop_yoff",
         Callback = function(v) POP_YOFF = v end,
     })
+    c:Label({ Text = "HP: pakai Touch / Sinyal. Mode Mouse membuat Roblox mengira kamu di PC (joystick hilang)." })
     c:Button({
         Title = "Cek folder Pops", Text = "Cek folder Pops",
         Callback = function()
