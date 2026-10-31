@@ -1,6 +1,6 @@
 -- KatssinnnHub | Game 7 (Anime Eyes)
 -- Sidebar: Home / Main / Player / Settings (library: ui.lua)
--- Fitur: Auto Click (Train), Auto Attack (Cast "attack"), Auto Rebirth, Auto Equip Best Pet, Remote Logger.
+-- Fitur: Auto Click, Auto Train (teleport sesuai rebirth), Auto Attack, God Mode, Auto Rebirth, Auto Equip Best Pet, Remote Logger.
 local BASE = "https://raw.githubusercontent.com/katssV7/Test/refs/heads/main/"
 local UI = loadstring(game:HttpGet(BASE .. "ui.lua"))()
 
@@ -22,7 +22,7 @@ local RunService = game:GetService("RunService")
 local LP = Players.LocalPlayer
 
 -- ===== LOOP LAMBAT (rebirth, equip pet) =====
-local runId = { rebirth = 0, equip = 0, npc = 0 }
+local runId = { rebirth = 0, equip = 0, npc = 0, train = 0 }
 local function Loop(key, enabled, getDelay, fn)
     runId[key] += 1
     if not enabled then return end
@@ -77,7 +77,7 @@ local function Remote(name)
     return RemotesF and (RemotesF:FindFirstChild(name) or RemotesF:WaitForChild(name, 5))
 end
 
-local Stats = { clicks = 0, attacks = 0, rebirths = 0, equips = 0, errors = 0, target = "-" }
+local Stats = { clicks = 0, attacks = 0, rebirths = 0, equips = 0, errors = 0, target = "-", zone = "-" }
 
 -- panggil remote sesuai jenisnya (RemoteEvent = FireServer, RemoteFunction = InvokeServer)
 local function Call(name, ...)
@@ -172,6 +172,72 @@ local function EquipBest(id)
     end)
 end
 
+-- ===== AUTO TRAIN (teleport ke zona train sesuai rebirth) =====
+-- { syarat rebirth minimal, posisi }. Zona yang dipakai = syarat terbesar yang MASIH <= rebirth pemain.
+-- Contoh: rebirth 3/4/5 tetap di zona "2 REBIRTH"; baru pindah ke zona 6 saat rebirth sudah 6.
+-- Kalau ada zona lain (di bawah 56 REBIRTH) tinggal tambah baris baru di tabel ini.
+local TRAIN_ZONES = {
+    { 0,  Vector3.new(-59, 4, 37) },
+    { 2,  Vector3.new(-86, 5, 37) },
+    { 6,  Vector3.new(-144, 4, 38) },
+    { 12, Vector3.new(-61, 4, 66) },
+    { 20, Vector3.new(-115, 4, 63) },
+    { 28, Vector3.new(-144, 4, 63) },
+    { 36, Vector3.new(-88, 4, 91) },
+    { 44, Vector3.new(-116, 4, 91) },
+    { 56, Vector3.new(-60, 4, 121) },
+}
+local TRAIN_STAY = 12     -- kalau lebih jauh dari ini (stud) dari titik train, teleport lagi
+local TRAIN_INT = 1       -- jeda cek (detik)
+
+local function GetRebirth()
+    local ls = LP:FindFirstChild("leaderstats")
+    if not ls then return nil end
+    for _, v in ipairs(ls:GetChildren()) do
+        if v:IsA("ValueBase") and string.find(string.lower(v.Name), "rebirth", 1, true) then
+            local n = tonumber((tostring(v.Value):gsub(",", "")))
+            if n then return n end
+        end
+    end
+    return nil
+end
+
+local function ZoneFor(rb)
+    local z = TRAIN_ZONES[1]
+    for _, e in ipairs(TRAIN_ZONES) do
+        if rb >= e[1] then z = e end
+    end
+    return z
+end
+
+local function TrainStep()
+    local hrp, rb = Root(), GetRebirth()
+    if not hrp then return end
+    if not rb then Stats.zone = "leaderstats Rebirth tidak ketemu"; return end
+    local z = ZoneFor(rb)
+    Stats.zone = z[1] .. " REBIRTH  (rebirth kamu: " .. rb .. ")"
+    if (hrp.Position - z[2]).Magnitude > TRAIN_STAY then
+        hrp.CFrame = CFrame.new(z[2] + Vector3.new(0, 3, 0))
+        pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end)
+    end
+end
+
+-- ===== GOD MODE (jaga darah tetap penuh) =====
+local godOn = false
+local function GetHum() local c = LP.Character; return c and c:FindFirstChildOfClass("Humanoid") end
+W.Conns[#W.Conns + 1] = RunService.Heartbeat:Connect(function()
+    if not godOn then return end
+    local h = GetHum()
+    if h and h.Health > 0 and h.Health < h.MaxHealth then h.Health = h.MaxHealth end
+end)
+local function GodState(v)
+    local h = GetHum()
+    if h then pcall(function() h:SetStateEnabled(Enum.HumanoidStateType.Dead, not v) end) end
+end
+W.Conns[#W.Conns + 1] = LP.CharacterAdded:Connect(function()
+    if godOn then task.wait(0.5); GodState(true) end
+end)
+
 -- ===== REMOTE LOGGER (untuk melihat argumen skill lain: Clairvoyant Judgement, Arrow Storm, dll.) =====
 local logOn, logLines, oldNc = false, {}, nil
 local function Fmt(v)
@@ -215,56 +281,91 @@ local PlayerPage = W:AddPage({ Name = "Player", Icon = "user" })
 
 -- ---------- kolom 1 ----------
 local cClick = Main:AddCard({ Title = "Auto Click (Train)", Icon = "zap", Column = 1 })
-cClick:Toggle({
-    Title = "Auto Click", id = "ae_click",
+-- Tanda v di sebelah switch = buka/tutup pengaturan (slider dkk.) lewat Toggle{ Expand = true } + tg:Sub(fn)
+local tgClick = cClick:Toggle({
+    Title = "Auto Click", id = "ae_click", Expand = true,
     Callback = function(v)
         clickPulse.on = v
         clickPulse.acc = 0
         N("Auto Click", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
     end,
 })
-cClick:Slider({
-    Title = "Kecepatan click (jeda detik, terkecil 0.01)", Min = 0.01, Max = 1, Value = 0.1, Rounding = 2, Suffix = "s", id = "ae_click_speed",
-    Callback = function(v) clickPulse.int = math.max(v, 0.01) end,
+tgClick:Sub(function(c)
+    c:Slider({
+        Title = "Kecepatan click (jeda detik, terkecil 0.01)", Min = 0.01, Max = 1, Value = 0.1, Rounding = 2, Suffix = "s", id = "ae_click_speed",
+        Callback = function(v) clickPulse.int = math.max(v, 0.01) end,
+    })
+end)
+
+-- Auto Train: tepat di bawah Auto Click
+local tgTrain = cClick:Toggle({
+    Title = "Auto Train (teleport sesuai rebirth)", id = "ae_train", Expand = true,
+    Callback = function(v)
+        Loop("train", v, function() return TRAIN_INT end, TrainStep)
+        if not v then Stats.zone = "-" end
+        N("Auto Train", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
+    end,
 })
+tgTrain:Sub(function(c)
+    c:Slider({
+        Title = "Jeda cek rebirth (s)", Min = 0.5, Max = 10, Value = 1, Rounding = 1, Suffix = "s", id = "ae_train_int",
+        Callback = function(v) TRAIN_INT = v end,
+    })
+    c:Slider({
+        Title = "Jarak sebelum teleport ulang", Min = 3, Max = 60, Value = 12, Rounding = 0, id = "ae_train_stay",
+        Callback = function(v) TRAIN_STAY = v end,
+    })
+end)
 
 local cAtk = Main:AddCard({ Title = "Auto Attack (Cast)", Icon = "swords", Column = 1 })
-cAtk:Toggle({
-    Title = "Auto Attack", id = "ae_attack",
+local tgAtk = cAtk:Toggle({
+    Title = "Auto Attack", id = "ae_attack", Expand = true,
     Callback = function(v)
         attackPulse.on = v
         attackPulse.acc = 0
         N("Auto Attack", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
     end,
 })
-cAtk:Slider({
-    Title = "Kecepatan attack (jeda detik, terkecil 0.01)", Min = 0.01, Max = 2, Value = 0.2, Rounding = 2, Suffix = "s", id = "ae_attack_speed",
-    Callback = function(v) attackPulse.int = math.max(v, 0.01) end,
-})
-cAtk:Dropdown({
-    Title = "Arah / target serangan", List = { "Depan karakter", "NPC / Boss terdekat", "Posisi tersimpan" },
-    Value = "Depan karakter", id = "ae_target",
+tgAtk:Sub(function(c)
+    c:Slider({
+        Title = "Kecepatan attack (jeda detik, terkecil 0.01)", Min = 0.01, Max = 2, Value = 0.2, Rounding = 2, Suffix = "s", id = "ae_attack_speed",
+        Callback = function(v) attackPulse.int = math.max(v, 0.01) end,
+    })
+    c:Dropdown({
+        Title = "Arah / target serangan", List = { "Depan karakter", "NPC / Boss terdekat", "Posisi tersimpan" },
+        Value = "Depan karakter", id = "ae_target",
+        Callback = function(v)
+            if not v then return end
+            TARGET = tostring(v)
+            Loop("npc", TARGET == "NPC / Boss terdekat", function() return 2 end, function() ScanNpcs() end)
+        end,
+    })
+    c:Slider({
+        Title = "Jarak titik serangan di depan karakter", Min = 3, Max = 80, Value = 20, Rounding = 0, id = "ae_front",
+        Callback = function(v) FRONT = v end,
+    })
+    c:Slider({
+        Title = "Jarak maks. NPC / Boss", Min = 20, Max = 1500, Value = 300, Rounding = 0, id = "ae_range",
+        Callback = function(v) RANGE = v end,
+    })
+    c:Button({
+        Title = "Simpan posisi sekarang", Text = "Simpan posisi sekarang (untuk 'Posisi tersimpan')",
+        Callback = function()
+            local hrp = Root()
+            if not hrp then N("Posisi", "Karakter belum siap", "#DC3232"); return end
+            savedPos = hrp.Position
+            N("Posisi tersimpan", string.format("%.1f, %.1f, %.1f", savedPos.X, savedPos.Y, savedPos.Z), "#50C864")
+        end,
+    })
+end)
+
+local cGod = Main:AddCard({ Title = "Survival", Icon = "shield", Column = 1 })
+cGod:Toggle({
+    Title = "God Mode", Desc = "Darah dijaga tetap penuh saat diserang", id = "ae_god",
     Callback = function(v)
-        if not v then return end
-        TARGET = tostring(v)
-        Loop("npc", TARGET == "NPC / Boss terdekat", function() return 2 end, function() ScanNpcs() end)
-    end,
-})
-cAtk:Slider({
-    Title = "Jarak titik serangan di depan karakter", Min = 3, Max = 80, Value = 20, Rounding = 0, id = "ae_front",
-    Callback = function(v) FRONT = v end,
-})
-cAtk:Slider({
-    Title = "Jarak maks. NPC / Boss", Min = 20, Max = 1500, Value = 300, Rounding = 0, id = "ae_range",
-    Callback = function(v) RANGE = v end,
-})
-cAtk:Button({
-    Title = "Simpan posisi sekarang", Text = "Simpan posisi sekarang (untuk 'Posisi tersimpan')",
-    Callback = function()
-        local hrp = Root()
-        if not hrp then N("Posisi", "Karakter belum siap", "#DC3232"); return end
-        savedPos = hrp.Position
-        N("Posisi tersimpan", string.format("%.1f, %.1f, %.1f", savedPos.X, savedPos.Y, savedPos.Z), "#50C864")
+        godOn = v
+        GodState(v)
+        N("God Mode", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
     end,
 })
 
@@ -327,7 +428,8 @@ task.spawn(function()
         pcall(function()
             local txt = "Click: " .. Stats.clicks .. "   Attack: " .. Stats.attacks ..
                 "\nRebirth: " .. Stats.rebirths .. "   Equip best: " .. Stats.equips ..
-                "\nTarget attack: " .. Stats.target .. "   Error: " .. Stats.errors
+                "\nTarget attack: " .. Stats.target .. "   Error: " .. Stats.errors ..
+                "\nZona train: " .. Stats.zone
             if logOn and #logLines > 0 then txt ..= "\n— remote terakhir —\n" .. table.concat(logLines, "\n") end
             stLbl:SetText(txt)
         end)
@@ -337,6 +439,8 @@ end)
 -- hentikan semua saat Unload
 W:OnUnload(function()
     logOn = false
+    godOn = false
+    GodState(false)
     for _, p in ipairs(pulses) do p.on = false end
     for k in pairs(runId) do runId[k] += 1 end
 end)
