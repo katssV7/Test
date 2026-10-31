@@ -119,7 +119,7 @@ local WORLDS = {
             [15] = V(0, 4, -1334),  -- di catatan tertulis "0, 4, 1334"; saya anggap -1334 (pola z terus turun)
         },
         claim = {
-            [1] = V(18, 5, -111),  [2] = V(20, 6, -203),  [3] = V(18, 5, -292),  [4] = V(19, 7, -380),  [5] = V(20, 7, -470),
+            [1] = V(20, 4, -110),  [2] = V(20, 6, -203),  [3] = V(18, 5, -292),  [4] = V(19, 7, -380),  [5] = V(20, 7, -470),
             [6] = V(18, 5, -560),  [7] = V(19, 7, -651),  [8] = V(16, 6, -740),  [9] = V(19, 5, -831),  [10] = V(17, 6, -922),
             [11] = V(20, 7, -1008), [12] = V(17, 5, -1100), [13] = V(16, 6, -1190), [14] = V(17, 5, -1280), [15] = V(17, 6, -1372),
         },
@@ -161,7 +161,7 @@ local function EnemyList()
     end
     return out
 end
-local RADIUS = 200
+local RADIUS = 100
 local function NearestEnemy(point)
     local best, bd
     for _, e in ipairs(EnemyList()) do
@@ -244,12 +244,18 @@ end
 
 -- ===== AUTO STAGE =====
 -- Pilih World + Stage tujuan (N). Siklus (otomatis berulang dari stage awal):
---   stage 1: teleport ke titik serang -> attack 3x dalam 1 detik -> stage 2: teleport -> attack 3x dalam 1 detik -> ... -> stage N
---   setelah stage N: teleport ke claim trophy stage N (hanya stage tujuan), tunggu 1 detik, lalu mulai lagi dari stage 1.
--- Arah attack = musuh terdekat di workspace.MyEnemies; kalau tidak ada musuh, ke titik serang stage itu.
+--   stage 1: teleport ke titik serang -> SPAM attack tanpa henti sampai semua musuh di workspace.MyEnemies mati
+--   -> stage 2: teleport -> spam sampai musuh mati -> ... -> stage N.
+--   Setelah musuh stage N mati: teleport ke claim trophy stage N (hanya stage tujuan), tunggu 1 detik, lalu mulai lagi dari stage awal.
+-- Arah attack = musuh terdekat di MyEnemies; kalau belum ada musuh, ke titik serang stage itu.
 local WORLD, STAGE_END = "World 1", 1
-local STAGE_WAIT, ATTACK_SPAM = 1, 3
-local tgStage, tgTrain      -- toggle (diisi di bagian UI)
+local ATTACK_GAP = 0.08        -- jeda antar attack saat spam
+local FIRST_WAIT = 1           -- tunggu musuh muncul setelah teleport (kalau tidak ada musuh sama sekali, lanjut)
+local CLEAR_GRACE = 0.5        -- musuh dianggap habis kalau tidak terlihat selama ini
+local STAGE_MAX = 90           -- pengaman: kalau satu stage lebih lama dari ini, lanjut (musuh tidak mati-mati)
+local STAY = 25                -- kalau terdorong lebih jauh dari ini, teleport ulang ke titik serang
+local CLAIM_WAIT = 1
+local tgStage, tgTrain         -- toggle (diisi di bagian UI)
 
 local function FirePromptsNear(pos)       -- kalau claim memakai ProximityPrompt, ikut ditekan
     if not fireproximityprompt then return end
@@ -266,19 +272,32 @@ local function StageOff()
     task.defer(function() if tgStage then tgStage:Set(false) end end)
 end
 
--- attack ATTACK_SPAM kali, tersebar rata dalam STAGE_WAIT detik
-local function AttackBurst(id, point)
-    local gap = STAGE_WAIT / ATTACK_SPAM
-    for _ = 1, ATTACK_SPAM do
-        if runId.stage ~= id then return false end
-        local p = point
-        local e = NearestEnemy(point)
-        if e then p = EnemyPos(e) end
-        local r = Remote("Cast")
-        if r then pcall(r.FireServer, r, "attack", V3(p.X, p.Y, p.Z)); Stats.attacks += 1 end
-        task.wait(gap)
+local function Attack(point)
+    local p = point
+    local e = NearestEnemy(point)
+    if e then p = EnemyPos(e) end
+    local r = Remote("Cast")
+    if r then pcall(r.FireServer, r, "attack", V3(p.X, p.Y, p.Z)); Stats.attacks += 1 end
+    return e ~= nil
+end
+
+-- spam attack terus sampai musuh habis. true = stage selesai, false = dibatalkan
+local function ClearStage(id, point)
+    local t0, lastSeen, seen = os.clock(), os.clock(), false
+    while runId.stage == id do
+        local hrp = Root()
+        if hrp and (hrp.Position - point).Magnitude > STAY then TP(point) end
+        local now = os.clock()
+        if Attack(point) then
+            seen, lastSeen = true, now
+        else
+            if seen and now - lastSeen >= CLEAR_GRACE then return true end        -- semua musuh mati
+            if not seen and now - t0 >= FIRST_WAIT then return true end           -- tidak ada musuh di stage ini
+        end
+        if now - t0 > STAGE_MAX then return true end
+        task.wait(ATTACK_GAP)
     end
-    return runId.stage == id
+    return false
 end
 
 local function RunStages(id)
@@ -295,18 +314,18 @@ local function RunStages(id)
         end
         Stats.stage = string.format("%s · Stage %d (serang)", WORLD, st)
         if not TP(ap) then task.wait(0.5) return end
-        if not AttackBurst(id, ap) then return end
+        if not ClearStage(id, ap) then return end
     end
     if runId.stage ~= id then return end
 
-    -- stage tujuan selesai -> claim trophy stage tujuan, tunggu 1 detik, lalu siklus mulai lagi dari stage awal
+    -- musuh stage tujuan sudah mati -> claim trophy stage tujuan, tunggu 1 detik, lalu siklus mulai lagi dari stage awal
     local cp = wd.claim[last]
     if cp then
         Stats.stage = string.format("%s · Stage %d (claim trophy)", WORLD, last)
         TP(cp)
         FirePromptsNear(cp)
         local t = 0
-        while t < STAGE_WAIT and runId.stage == id do t += task.wait(0.1) end
+        while t < CLAIM_WAIT and runId.stage == id do t += task.wait(0.1) end
     else
         N("Auto Stage", "Waypoint claim " .. WORLD .. " Stage " .. last .. " belum diisi", "#FFA500", 4)
     end
@@ -431,7 +450,7 @@ ddStage = cStage:Dropdown({
     end,
 })
 tgStage = cStage:Toggle({
-    Title = "Auto Stage", Desc = "Serang stage 1..tujuan, claim trophy, ulang otomatis", id = "ae_stage_on",
+    Title = "Auto Stage", Desc = "Spam attack sampai musuh mati, claim trophy, ulang otomatis", id = "ae_stage_on",
     Callback = function(v)
         if v and tgTrain and tgTrain.Value then tgTrain:Set(false) end       -- Auto Train & Auto Stage sama-sama teleport
         Loop("stage", v, function() return 0.1 end, RunStages)
