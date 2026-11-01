@@ -1,6 +1,6 @@
 -- KatssinnnHub | Game 7 (Anime Eyes)
 -- Sidebar: Home / Main / Player / Settings (library: ui.lua)
--- Fitur: Auto Click, Auto Train (teleport sesuai rebirth), Auto Stage (serang musuh di MyEnemies per stage -> claim trophy),
+-- Fitur: World/Teleport, Auto Hatch, Auto Click, Auto Train (teleport sesuai rebirth), Auto Stage (serang musuh di MyEnemies per stage -> claim trophy),
 --        Redeem Codes, Auto Rebirth, Auto Equip Best Pet, Remote Logger.
 local BASE = "https://raw.githubusercontent.com/katssV7/Test/refs/heads/main/"
 local UI = loadstring(game:HttpGet(BASE .. "ui.lua"))()
@@ -23,7 +23,7 @@ local RunService = game:GetService("RunService")
 local LP = Players.LocalPlayer
 
 -- ===== LOOP LAMBAT (rebirth, equip pet) =====
-local runId = { rebirth = 0, equip = 0, train = 0, stage = 0, pop = 0 }
+local runId = { rebirth = 0, equip = 0, train = 0, stage = 0, pop = 0, hatch = 0 }
 local function Loop(key, enabled, getDelay, fn)
     runId[key] += 1
     if not enabled then return end
@@ -78,7 +78,7 @@ local function Remote(name)
     return RemotesF and (RemotesF:FindFirstChild(name) or RemotesF:WaitForChild(name, 5))
 end
 
-local Stats = { clicks = 0, attacks = 0, rebirths = 0, equips = 0, errors = 0, stage = "-", zone = "-", pop = "-", popClicks = 0 }
+local Stats = { clicks = 0, attacks = 0, rebirths = 0, equips = 0, errors = 0, stage = "-", zone = "-", pop = "-", popClicks = 0, hatch = "-", hatches = 0 }
 
 -- panggil remote sesuai jenisnya (RemoteEvent = FireServer, RemoteFunction = InvokeServer)
 local function Call(name, ...)
@@ -106,8 +106,9 @@ local function TP(pos)
 end
 
 -- ===== DATA WORLD / STAGE =====
--- attack = titik teleport untuk menyerang musuh stage itu; claim = titik teleport claim trophy stage itu.
--- World 2 belum diisi: tinggal isi tabel attack / claim-nya (nomor stage = kunci tabel) dan sesuaikan first / last.
+-- Per world: attack = titik serang tiap stage, claim = titik claim trophy tiap stage (kunci = nomor stage),
+--            train = { rebirth minimal, posisi } untuk Auto Train.
+-- World 3 belum punya waypoint: tinggal isi attack / claim / train-nya.
 local V = Vector3.new
 local WORLDS = {
     ["World 1"] = {
@@ -123,10 +124,40 @@ local WORLDS = {
             [6] = V(18, 5, -560),  [7] = V(19, 7, -651),  [8] = V(16, 6, -740),  [9] = V(19, 5, -831),  [10] = V(17, 6, -922),
             [11] = V(20, 7, -1008), [12] = V(17, 5, -1100), [13] = V(16, 6, -1190), [14] = V(17, 5, -1280), [15] = V(17, 6, -1372),
         },
+        train = {
+            { 0, V(-59, 4, 37) },  { 2, V(-86, 5, 37) },  { 6, V(-144, 4, 38) }, { 12, V(-61, 4, 66) }, { 20, V(-115, 4, 63) },
+            { 28, V(-144, 4, 63) }, { 36, V(-88, 4, 91) }, { 44, V(-116, 4, 91) }, { 56, V(-60, 4, 121) },
+        },
     },
-    ["World 2"] = { first = 10, last = 25, attack = {}, claim = {} },   -- BELUM DIISI
+    ["World 2"] = {
+        first = 1, last = 15,
+        attack = {
+            [1] = V(2999, 4, -66),   [2] = V(3001, 4, -165),  [3] = V(2999, 4, -250),  [4] = V(2998, 4, -339),  [5] = V(2996, 4, -430),
+            [6] = V(3001, 4, -522),  [7] = V(2998, 4, -610),  [8] = V(2997, 4, -699),  [9] = V(2999, 4, -791),  [10] = V(3000, 4, -879),
+            [11] = V(3000, 4, -977), [12] = V(2999, 4, -1060), [13] = V(3000, 4, -1146), [14] = V(2997, 4, -1242), [15] = V(3000, 4, -1330),
+        },
+        claim = {
+            [1] = V(3019, 6, -111),  [2] = V(3015, 7, -198),  [3] = V(3016, 8, -200),   -- stage 3: z -200 sesuai catatan (cek, mungkin -290)
+            [4] = V(3021, 6, -380),  [5] = V(3020, 5, -471),  [6] = V(3019, 7, -561),  [7] = V(3020, 7, -652),  [8] = V(3019, 5, -741),
+            [9] = V(3018, 5, -829),  [10] = V(3020, 5, -922), [11] = V(3018, 7, -1009), [12] = V(3018, 7, -1102), [13] = V(3021, 7, -1192),
+            [14] = V(3019, 7, -1280), [15] = V(3021, 5, -1321),                          -- stage 15: z -1321 sesuai catatan (cek, mungkin -1371)
+        },
+        train = {
+            { 64, V(2939, 4, 38) },  { 66, V(2909, 5, 38) },  { 69, V(2857, 4, 37) },  { 72, V(2939, 4, 64) },  { 77, V(2883, 4, 64) },
+            { 85, V(2855, 4, 66) },  { 97, V(2911, 4, 92) },  { 109, V(2883, 4, 94) }, { 121, V(2939, 4, 122) },
+        },
+    },
+    ["World 3"] = {
+        first = 1, last = 15, attack = {}, claim = {},        -- attack / claim World 3 BELUM DIISI
+        train = {
+            { 150, V(5938, 4, 36) },  { 157, V(5911, 5, 37) },  { 164, V(5855, 4, 37) },  { 172, V(5939, 4, 65) },  { 179, V(5882, 4, 63) },
+            { 186, V(5857, 4, 65) },  { 193, V(5913, 4, 92) },  { 200, V(5883, 4, 92) },  { 208, V(5940, 4, 121) },
+        },
+    },
 }
-local WORLD_ORDER = { "World 1", "World 2" }
+local WORLD_ORDER = { "World 1", "World 2", "World 3" }    -- urutan = nomor world untuk remote Teleport
+local WORLD_NAME  = { ["World 1"] = "Shinobi Land", ["World 2"] = "Celestial Realm", ["World 3"] = "Blood Moon" }
+local WORLD, STAGE_END = "World 1", 1                      -- world terpilih dipakai bersama Auto Stage, Auto Train, Auto Hatch
 local function StageList(w)
     local wd = WORLDS[w]
     local t = {}
@@ -192,21 +223,9 @@ local function EquipBest(id)
     end)
 end
 
--- ===== AUTO TRAIN (teleport ke zona train sesuai rebirth) =====
--- { syarat rebirth minimal, posisi }. Zona yang dipakai = syarat terbesar yang MASIH <= rebirth pemain.
--- Contoh: rebirth 3/4/5 tetap di zona "2 REBIRTH"; baru pindah ke zona 6 saat rebirth sudah 6.
--- Kalau ada zona lain (di bawah 56 REBIRTH) tinggal tambah baris baru di tabel ini.
-local TRAIN_ZONES = {
-    { 0,  Vector3.new(-59, 4, 37) },
-    { 2,  Vector3.new(-86, 5, 37) },
-    { 6,  Vector3.new(-144, 4, 38) },
-    { 12, Vector3.new(-61, 4, 66) },
-    { 20, Vector3.new(-115, 4, 63) },
-    { 28, Vector3.new(-144, 4, 63) },
-    { 36, Vector3.new(-88, 4, 91) },
-    { 44, Vector3.new(-116, 4, 91) },
-    { 56, Vector3.new(-60, 4, 121) },
-}
+-- ===== AUTO TRAIN (teleport ke zona train sesuai rebirth, mengikuti World terpilih) =====
+-- Zona train tiap world ada di WORLDS[...].train. Zona yang dipakai = syarat terbesar yang MASIH <= rebirth pemain.
+-- Contoh World 1: rebirth 3/4/5 tetap di zona "2 REBIRTH"; baru pindah ke zona 6 saat rebirth sudah 6.
 local TRAIN_STAY = 12     -- kalau lebih jauh dari ini (stud) dari titik train, teleport lagi
 local TRAIN_INT = 1       -- jeda cek (detik)
 
@@ -222,9 +241,11 @@ local function GetRebirth()
     return nil
 end
 
-local function ZoneFor(rb)
-    local z = TRAIN_ZONES[1]
-    for _, e in ipairs(TRAIN_ZONES) do
+local function ZoneFor(w, rb)
+    local zones = WORLDS[w] and WORLDS[w].train
+    if not zones or #zones == 0 then return nil end
+    local z = zones[1]
+    for _, e in ipairs(zones) do
         if rb >= e[1] then z = e end
     end
     return z
@@ -234,8 +255,9 @@ local function TrainStep()
     local hrp, rb = Root(), GetRebirth()
     if not hrp then return end
     if not rb then Stats.zone = "leaderstats Rebirth tidak ketemu"; return end
-    local z = ZoneFor(rb)
-    Stats.zone = z[1] .. " REBIRTH  (rebirth kamu: " .. rb .. ")"
+    local z = ZoneFor(WORLD, rb)
+    if not z then Stats.zone = WORLD .. ": zona train belum diisi"; return end
+    Stats.zone = WORLD .. " · " .. z[1] .. " REBIRTH  (rebirth kamu: " .. rb .. ")"
     local d = hrp.Position - z[2]
     if Vector3.new(d.X, 0, d.Z).Magnitude > TRAIN_STAY then      -- hanya jarak mendatar, supaya tinggi melayang tidak memicu teleport ulang
         TP(z[2])
@@ -248,7 +270,6 @@ end
 --   Setelah stage N: teleport ke claim trophy stage N (hanya stage tujuan), tunggu 1 detik, lalu mulai lagi dari stage awal.
 -- Arah attack & skill = posisi musuh terdekat di workspace.MyEnemies (vector dibuat otomatis dari posisi musuh);
 -- kalau belum ada musuh, dipakai titik serang stage itu.
-local WORLD, STAGE_END = "World 1", 1
 local STAGE_TIME = 1           -- lama di tiap stage (detik)
 local CLAIM_WAIT = 1           -- lama di trophy sebelum mulai lagi (detik)
 local tgStage, tgTrain         -- toggle (diisi di bagian UI)
@@ -502,7 +523,63 @@ local function PopStep()
             end
         end
     end
-     if active == 0 then Stats.pop = "menunggu pop muncul di Pops" end
+    if active == 0 then Stats.pop = "menunggu pop muncul di Pops" end
+end
+
+-- ===== AUTO HATCH (Auto Catch Pet) + TELEPORT WORLD =====
+-- Telur mengikuti World terpilih. Remote: PetAction:InvokeServer("hatch", { egg = id, count = 1 atau 3 }).
+-- price = harga satuan dalam Trophy. Buka x3 -> ditampilkan harga satuan × 3 = total.
+local EGGS = {
+    ["World 1"] = { { id = "normal", name = "Normal Egg", price = 10 }, { id = "shinobi", name = "Shinobi Egg", price = 400 } },
+    ["World 2"] = { { id = "lotus", name = "Lotus Egg", price = 790e6 }, { id = "celestial", name = "Celestial Egg", price = 1.8e12 } },
+    ["World 3"] = { { id = "bloodmoon", name = "Blood Moon Egg", price = 390e15 }, { id = "demon", name = "Demon Egg", price = 890e18 } },
+}
+local EGG_NAME, EGG_COUNT, HATCH_INT = "Normal Egg", 1, 0.3
+
+local NUM_SUF = { "", "K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc" }
+local function FmtNum(n)
+    local i = 1
+    while n >= 1000 and i < #NUM_SUF do n = n / 1000; i += 1 end
+    local t = string.format("%.2f", n):gsub("%.?0+$", "")
+    return t .. NUM_SUF[i]
+end
+
+local function EggNames(w)
+    local o = {}
+    for _, e in ipairs(EGGS[w] or {}) do o[#o + 1] = e.name end
+    return o
+end
+local function EggByName(w, name)
+    for _, e in ipairs(EGGS[w] or {}) do
+        if e.name == name then return e end
+    end
+end
+local function EggPriceText()
+    local e = EggByName(WORLD, EGG_NAME)
+    if not e then return "Pilih egg dulu" end
+    local one = FmtNum(e.price)
+    if EGG_COUNT <= 1 then return e.name .. "  ·  Harga: " .. one .. " Trophy" end
+    return e.name .. "  ·  Harga: " .. one .. " × " .. EGG_COUNT .. " = " .. FmtNum(e.price * EGG_COUNT) .. " Trophy"
+end
+
+local function HatchStep()
+    local e = EggByName(WORLD, EGG_NAME)
+    if not e then Stats.hatch = "pilih egg dulu"; return end
+    local ok, res = Call("PetAction", "hatch", { egg = e.id, count = EGG_COUNT })
+    local info = "ok"
+    if res ~= nil and res ~= true then
+        info = type(res) == "table" and "ok (tabel)" or tostring(res)
+        if #info > 36 then info = info:sub(1, 36) .. "…" end
+    end
+    if ok then Stats.hatches += EGG_COUNT end
+    Stats.hatch = e.name .. " ×" .. EGG_COUNT .. " · " .. (ok and info or "gagal")
+end
+
+local function TeleportWorld(name)
+    local idx = table.find(WORLD_ORDER, name)
+    if not idx then return end
+    Call("Teleport", idx)
+    N("Teleport", name .. " · " .. (WORLD_NAME[name] or ""), "#6495ED")
 end
 
 -- ===== REMOTE LOGGER (untuk melihat argumen skill lain: Clairvoyant Judgement, Arrow Storm, dll.) =====
@@ -547,6 +624,45 @@ local Main       = W:AddPage({ Name = "Main", Icon = "swords" })
 local PlayerPage = W:AddPage({ Name = "Player", Icon = "user" })
 
 -- ---------- kolom 1 ----------
+-- World terpilih dipakai bersama Auto Stage, Auto Train dan Auto Hatch
+local ddStage, ddEgg, eggLbl
+local worldTP, worldReady = true, false
+-- worldReady baru true setelah UI selesai dimuat (lihat W:OnBooted di bawah), supaya nilai config yang dimuat tidak memicu teleport
+
+local function ApplyWorld(name, allowTP)
+    local wd = WORLDS[name]
+    if not wd then return end
+    local changed = name ~= WORLD
+    WORLD = name
+    if ddStage then
+        ddStage:SetList(StageList(name))
+        if STAGE_END < wd.first or STAGE_END > wd.last then STAGE_END = wd.first end
+        ddStage:Set("Stage " .. STAGE_END, true)
+    end
+    if ddEgg then
+        local names = EggNames(name)
+        ddEgg:SetList(names)
+        if not EggByName(name, EGG_NAME) then EGG_NAME = names[1] or "" end
+        ddEgg:Set(EGG_NAME, true)
+    end
+    if eggLbl then eggLbl:SetText(EggPriceText()) end
+    if allowTP and changed and worldTP and worldReady then TeleportWorld(name) end
+end
+
+local cWorld = Main:AddCard({ Title = "World", Icon = "globe", Column = 1 })
+cWorld:Dropdown({
+    Title = "World (untuk Auto Stage / Train / Hatch)", List = WORLD_ORDER, Value = "World 1", id = "ae_world",
+    Callback = function(v) if v then ApplyWorld(tostring(v), true) end end,
+})
+cWorld:Toggle({
+    Title = "Teleport otomatis saat ganti World", Value = true, id = "ae_world_tp",
+    Callback = function(v) worldTP = v end,
+})
+cWorld:Button({
+    Title = "Teleport ke world terpilih", Text = "Teleport ke world terpilih",
+    Callback = function() TeleportWorld(WORLD) end,
+})
+
 local cClick = Main:AddCard({ Title = "Auto Click (Train)", Icon = "zap", Column = 1 })
 -- Tanda v di sebelah switch = buka/tutup pengaturan (slider dkk.) lewat Toggle{ Expand = true } + tg:Sub(fn)
 local tgClick = cClick:Toggle({
@@ -621,20 +737,6 @@ tgPop:Sub(function(c)
 end)
 
 local cStage = Main:AddCard({ Title = "Auto Stage", Icon = "swords", Column = 1 })
-local ddStage
-cStage:Dropdown({
-    Title = "World", List = WORLD_ORDER, Value = "World 1", id = "ae_world",
-    Callback = function(v)
-        if not v then return end
-        WORLD = tostring(v)
-        local wd = WORLDS[WORLD]
-        if ddStage and wd then
-            ddStage:SetList(StageList(WORLD))
-            if STAGE_END < wd.first or STAGE_END > wd.last then STAGE_END = wd.first end
-            ddStage:Set("Stage " .. STAGE_END, true)
-        end
-    end,
-})
 ddStage = cStage:Dropdown({
     Title = "Stage tujuan (titik akhir)", List = StageList("World 1"), Value = "Stage 1", id = "ae_stage",
     Callback = function(v)
@@ -700,6 +802,43 @@ cPet:Button({
     Callback = function() EquipBest(); N("Equip Best", "Dikirim", "#6495ED") end,
 })
 
+local cHatch = Main:AddCard({ Title = "Auto Hatch (Catch Pet)", Icon = "egg", Column = 2 })
+ddEgg = cHatch:Dropdown({
+    Title = "Egg (sesuai World terpilih)", List = EggNames("World 1"), Value = "Normal Egg", id = "ae_egg",
+    Callback = function(v)
+        if not v then return end
+        EGG_NAME = tostring(v)
+        if eggLbl then eggLbl:SetText(EggPriceText()) end
+    end,
+})
+cHatch:Dropdown({
+    Title = "Jumlah sekali buka", List = { "Buka 1 egg", "Buka 3 egg" }, Value = "Buka 1 egg", id = "ae_egg_count",
+    Callback = function(v)
+        local n = v and tonumber(tostring(v):match("%d+"))
+        if n then EGG_COUNT = n end
+        if eggLbl then eggLbl:SetText(EggPriceText()) end
+    end,
+})
+eggLbl = cHatch:Label({ Text = EggPriceText(), Size = 12, Color = "Text" })
+local tgHatch = cHatch:Toggle({
+    Title = "Auto Hatch", id = "ae_hatch", Expand = true,
+    Callback = function(v)
+        Loop("hatch", v, function() return HATCH_INT end, HatchStep)
+        if not v then Stats.hatch = "-" end
+        N("Auto Hatch", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
+    end,
+})
+tgHatch:Sub(function(c)
+    c:Slider({
+        Title = "Jeda antar hatch (s)", Min = 0.05, Max = 5, Value = 0.3, Rounding = 2, Suffix = "s", id = "ae_hatch_int",
+        Callback = function(v) HATCH_INT = v end,
+    })
+end)
+cHatch:Button({
+    Title = "Hatch sekali", Text = "Hatch sekali sekarang",
+    Callback = function() task.spawn(HatchStep) end,
+})
+
 local cStat = Main:AddCard({ Title = "Status", Icon = "activity", Column = 2 })
 local stLbl = cStat:Label({ Text = "-", Size = 11, Color = "Text" })
 
@@ -724,7 +863,8 @@ task.spawn(function()
                 "\nRebirth: " .. Stats.rebirths .. "   Equip best: " .. Stats.equips ..
                 "\nStage: " .. Stats.stage .. "   Error: " .. Stats.errors ..
                 "\nZona train: " .. Stats.zone ..
-                "\nPop: " .. Stats.pop .. "   klik: " .. Stats.popClicks
+                "\nPop: " .. Stats.pop .. "   klik: " .. Stats.popClicks ..
+                "\nHatch: " .. Stats.hatch .. "   total egg: " .. Stats.hatches
             if logOn and #logLines > 0 then txt ..= "\n— remote terakhir —\n" .. table.concat(logLines, "\n") end
             stLbl:SetText(txt)
         end)
@@ -752,4 +892,4 @@ end
 
 W:SelectPage("Main")
 W:Ready()      -- jalankan nilai awal + autoload config setelah intro selesai
-W:OnBooted(function() N("KatssinnnHub", "Anime Eyes dimuat  ·  RCtrl untuk buka/tutup", "#50C864", 4) end)
+W:OnBooted(function() task.delay(2, function() worldReady = true end); N("KatssinnnHub", "Anime Eyes dimuat  ·  RCtrl untuk buka/tutup", "#50C864", 4) end)
