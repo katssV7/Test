@@ -1,7 +1,7 @@
 -- KatssinnnHub | Game 7 (Anime Eyes)
 -- Sidebar: Home / Main / Player / Settings (library: ui.lua)
 -- Fitur: World/Teleport, Auto Hatch, Auto Click, Auto Train (teleport sesuai rebirth), Auto Stage (serang musuh di MyEnemies per stage -> claim trophy),
---        Redeem Codes, Auto Rebirth, Auto Equip Best Pet.
+--        Redeem Codes, Auto Rebirth, Auto Equip Best Pet, Auto Fuse, Auto Claim Reward, Auto Boss Kyubi (join + serang + dodge).
 local BASE = "https://raw.githubusercontent.com/katssV7/Test/refs/heads/main/"
 local UI = loadstring(game:HttpGet(BASE .. "ui.lua"))()
 
@@ -23,7 +23,7 @@ local RunService = game:GetService("RunService")
 local LP = Players.LocalPlayer
 
 -- ===== LOOP LAMBAT (rebirth, equip pet) =====
-local runId = { rebirth = 0, equip = 0, train = 0, stage = 0, pop = 0, hatch = 0 }
+local runId = { rebirth = 0, equip = 0, train = 0, stage = 0, pop = 0, hatch = 0, fuse = 0, reward = 0, boss = 0 }
 local function Loop(key, enabled, getDelay, fn)
     runId[key] += 1
     if not enabled then return end
@@ -78,7 +78,7 @@ local function Remote(name)
     return RemotesF and (RemotesF:FindFirstChild(name) or RemotesF:WaitForChild(name, 5))
 end
 
-local Stats = { clicks = 0, attacks = 0, rebirths = 0, equips = 0, errors = 0, stage = "-", zone = "-", pop = "-", popClicks = 0, hatch = "-", hatches = 0 }
+local Stats = { clicks = 0, attacks = 0, rebirths = 0, equips = 0, errors = 0, stage = "-", zone = "-", pop = "-", popClicks = 0, hatch = "-", hatches = 0, fuse = "-", fuses = 0, claims = 0, boss = "-" }
 
 -- panggil remote sesuai jenisnya (RemoteEvent = FireServer, RemoteFunction = InvokeServer)
 local function Call(name, ...)
@@ -104,6 +104,9 @@ local function TP(pos)
     pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end)
     return true
 end
+
+-- true selama kamu sedang bertarung melawan boss (Auto Boss Kyubi) -> fitur teleport lain (Train / Stage / Hatch) berhenti sementara
+local BossBusy = false
 
 -- ===== DATA WORLD / STAGE =====
 -- Per world: attack = titik serang tiap stage, claim = titik claim trophy tiap stage (kunci = nomor stage),
@@ -252,6 +255,7 @@ local function ZoneFor(w, rb)
 end
 
 local function TrainStep()
+    if BossBusy then Stats.zone = "menunggu boss selesai"; return end
     local hrp, rb = Root(), GetRebirth()
     if not hrp then return end
     if not rb then Stats.zone = "leaderstats Rebirth tidak ketemu"; return end
@@ -272,7 +276,7 @@ end
 -- kalau belum ada musuh, dipakai titik serang stage itu.
 local STAGE_TIME = 1           -- lama di tiap stage (detik)
 local CLAIM_WAIT = 1           -- lama di trophy sebelum mulai lagi (detik)
-local tgStage, tgTrain         -- toggle (diisi di bagian UI)
+local tgStage, tgTrain, tgHatch -- toggle (diisi di bagian UI)
 
 local AimPos                   -- posisi bidikan (posisi musuh / titik serang), diperbarui tiap frame
 local stagePulse = NewPulse(function()
@@ -286,6 +290,15 @@ local stagePulse = NewPulse(function()
     pcall(rc.FireServer, rc, "E", v)         -- skill 2
     Stats.attacks += 1
 end, 0.01)
+
+local function WaitBossIdle(id)           -- jeda Auto Stage selama boss berlangsung
+    stagePulse.on = false
+    AimPos = nil
+    while BossBusy and runId.stage == id do
+        Stats.stage = "menunggu boss selesai"
+        task.wait(0.3)
+    end
+end
 
 local function FirePromptsNear(pos)       -- kalau claim memakai ProximityPrompt, ikut ditekan
     if not fireproximityprompt then return end
@@ -308,6 +321,7 @@ local function RunStages(id)
     local last = math.clamp(STAGE_END, wd.first, wd.last)
     for st = wd.first, last do
         if runId.stage ~= id then return end
+        if BossBusy then WaitBossIdle(id) end
         local ap = wd.attack[st]
         if not ap then
             N("Auto Stage", "Waypoint " .. WORLD .. " Stage " .. st .. " belum diisi", "#DC3232", 5)
@@ -320,6 +334,7 @@ local function RunStages(id)
         stagePulse.on = true
         local t = 0
         while t < STAGE_TIME and runId.stage == id do
+            if BossBusy then WaitBossIdle(id); TP(ap); stagePulse.on = true end
             local e = NearestEnemy(ap)
             AimPos = e and EnemyPos(e) or ap
             t += task.wait()
@@ -476,11 +491,22 @@ end
 -- Telur mengikuti World terpilih. Remote: PetAction:InvokeServer("hatch", { egg = id, count = 1 atau 3 }).
 -- price = harga satuan dalam Trophy. Buka x3 -> ditampilkan harga satuan × 3 = total.
 local EGGS = {
-    ["World 1"] = { { id = "normal", name = "Normal Egg", price = 10 }, { id = "shinobi", name = "Shinobi Egg", price = 400 } },
-    ["World 2"] = { { id = "lotus", name = "Lotus Egg", price = 790e6 }, { id = "celestial", name = "Celestial Egg", price = 1.8e12 } },
-    ["World 3"] = { { id = "bloodmoon", name = "Blood Moon Egg", price = 390e15 }, { id = "demon", name = "Demon Egg", price = 890e18 } },
+    -- pos = titik berdiri dekat egg (hatch tidak bisa dari jauh, jadi Auto Hatch teleport ke sini dulu)
+    ["World 1"] = {
+        { id = "normal", name = "Normal Egg", price = 10, pos = V(61, 5, 35) },
+        { id = "shinobi", name = "Shinobi Egg", price = 400, pos = V(85, 5, 34) },
+    },
+    ["World 2"] = {
+        { id = "lotus", name = "Lotus Egg", price = 790e6, pos = V(3057, 5, 35) },
+        { id = "celestial", name = "Celestial Egg", price = 1.8e12, pos = V(3083, 5, 36) },
+    },
+    ["World 3"] = {
+        { id = "bloodmoon", name = "Blood Moon Egg", price = 390e15, pos = V(6061, 5, 33) },
+        { id = "demon", name = "Demon Egg", price = 890e18, pos = V(6083, 5, 36) },
+    },
 }
 local EGG_NAME, EGG_COUNT, HATCH_INT = "Normal Egg", 1, 0.3
+local HATCH_TP, HATCH_NEAR = true, 12      -- teleport ke egg kalau lebih jauh dari HATCH_NEAR stud (jarak mendatar)
 
 local NUM_SUF = { "", "K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc" }
 local function FmtNum(n)
@@ -511,6 +537,17 @@ end
 local function HatchStep()
     local e = EggByName(WORLD, EGG_NAME)
     if not e then Stats.hatch = "pilih egg dulu"; return end
+    if BossBusy then Stats.hatch = "menunggu boss selesai"; return end
+    if HATCH_TP and e.pos then
+        local hrp = Root()
+        if not hrp then return end
+        local d = hrp.Position - e.pos
+        if Vector3.new(d.X, 0, d.Z).Magnitude > HATCH_NEAR then
+            Stats.hatch = "teleport ke " .. e.name
+            TP(e.pos)
+            task.wait(0.25)
+        end
+    end
     local ok, res = Call("PetAction", "hatch", { egg = e.id, count = EGG_COUNT })
     local info = "ok"
     if res ~= nil and res ~= true then
@@ -526,6 +563,314 @@ local function TeleportWorld(name)
     if not idx then return end
     Call("Teleport", idx)
     N("Teleport", name .. " · " .. (WORLD_NAME[name] or ""), "#6495ED")
+end
+
+-- ===== AUTO CLAIM REWARD =====
+-- Remote: ClaimReward:InvokeServer(1 / 2 / 3)
+local REWARD_INT = 30
+local function RewardStep()
+    for i = 1, 3 do
+        local ok = Call("ClaimReward", i)
+        if ok then Stats.claims += 1 end
+        task.wait(0.2)
+    end
+end
+
+-- ===== AUTO FUSE =====
+-- Remote: Fuse:InvokeServer("fuse", { "428", "429", "430", "431" })  -> 4 ID pet (berupa teks) sekali fuse; ID terus bertambah.
+-- Mode "Scan data game": cari ID pet milikmu di data game (PlayerGui / data player), lalu fuse per 4 ID berurutan.
+-- Mode "Scan ID bertahap": untuk game yang ID-nya tidak terbaca; coba jendela 4 ID berurutan mulai dari ID awal,
+--   beberapa jendela sekaligus (cepat); begitu satu fuse berhasil, lanjut ke ID berikutnya (angka terus bertambah).
+local FUSE_MODE, FUSE_INT = "Scan data game", 1
+local FUSE_START, FUSE_MAX, FUSE_BATCH = 400, 3000, 6
+local fuseCursor
+local petIdCache, petIdT = {}, 0
+
+local function CollectPetIds()
+    if os.clock() - petIdT < 2 then return petIdCache end
+    petIdT = os.clock()
+    local pg = LP:FindFirstChildOfClass("PlayerGui")
+    local set = {}
+    local function hint(i)          -- ID pet biasanya ada di bawah induk bernama pet / inventory / fuse
+        local p = i.Parent
+        for _ = 1, 5 do
+            if not p then return false end
+            local n = string.lower(p.Name)
+            if n:find("pet") or n:find("inventory") or n:find("fuse") then return true end
+            p = p.Parent
+        end
+        return false
+    end
+    local function consider(i)
+        local n = tonumber(i.Name)
+        if n and n >= 1 and n < 1e7 and n == math.floor(n) and hint(i) then set[n] = true end
+        for _, a in ipairs({ "PetId", "PetID", "Id", "ID", "UID", "Uid" }) do
+            local v = i:GetAttribute(a)
+            local nv = type(v) == "number" and v or (type(v) == "string" and tonumber(v))
+            if nv and nv >= 1 and nv < 1e7 and hint(i) then set[nv] = true end
+        end
+    end
+    local roots = { pg, LP }
+    for _, c in ipairs(RS:GetChildren()) do
+        if c.Name == LP.Name or c.Name == tostring(LP.UserId) then roots[#roots + 1] = c end
+        for _, cc in ipairs(c:GetChildren()) do
+            if cc.Name == LP.Name or cc.Name == tostring(LP.UserId) then roots[#roots + 1] = cc end
+        end
+    end
+    for _, root in ipairs(roots) do
+        local n = 0
+        for _, d in ipairs(root:GetDescendants()) do
+            n += 1
+            if n % 3000 == 0 then task.wait() end
+            consider(d)
+        end
+    end
+    local list = {}
+    for k in pairs(set) do list[#list + 1] = k end
+    table.sort(list)
+    petIdCache = list
+    return list
+end
+
+-- true = jelas berhasil, false = jelas gagal, nil = tidak jelas (server tidak mengembalikan apa-apa)
+local function FuseVerdict(ok, res)
+    if not ok then return false end
+    if res == nil then return nil end
+    if res == false then return false end
+    if type(res) == "string" then
+        local l = string.lower(res)
+        for _, w in ipairs({ "fail", "invalid", "not ", "error", "cannot", "can't", "need", "must" }) do
+            if l:find(w, 1, true) then return false end
+        end
+        return true
+    end
+    if type(res) == "table" then
+        if res.success == false or res.Success == false or res.ok == false or res.error ~= nil or res.Error ~= nil then return false end
+        return true
+    end
+    return true
+end
+
+local function FuseCall(ids)
+    local strs = {}
+    for i, v in ipairs(ids) do strs[i] = tostring(v) end
+    local ok, res = Call("Fuse", "fuse", strs)
+    return FuseVerdict(ok, res)
+end
+
+local function FuseStep(id)
+    if FUSE_MODE == "Scan data game" then
+        local ids = CollectPetIds()
+        if #ids < 4 then Stats.fuse = "ID pet tidak ketemu di data game (coba mode Scan ID bertahap)"; return end
+        local tries = 0
+        for i = 1, #ids - 3 do
+            if runId.fuse ~= id or tries >= FUSE_BATCH then break end
+            tries += 1
+            local grp = { ids[i], ids[i + 1], ids[i + 2], ids[i + 3] }
+            local v = FuseCall(grp)
+            if v == nil then          -- tidak jelas -> anggap berhasil kalau ID-nya hilang dari data
+                petIdT = 0
+                local now = {}
+                for _, n in ipairs(CollectPetIds()) do now[n] = true end
+                v = not (now[grp[1]] and now[grp[2]] and now[grp[3]] and now[grp[4]])
+            end
+            if v then
+                Stats.fuses += 1
+                Stats.fuse = "fuse ok: " .. table.concat(grp, ",")
+                petIdT = 0
+                return
+            end
+        end
+        Stats.fuse = "belum ada 4 pet yang bisa di-fuse (" .. #ids .. " ID terbaca)"
+        return
+    end
+
+    -- Scan ID bertahap
+    fuseCursor = fuseCursor or FUSE_START
+    if fuseCursor > FUSE_MAX then fuseCursor = FUSE_START end
+    local base, pending, hit = fuseCursor, FUSE_BATCH, nil
+    for k = 0, FUSE_BATCH - 1 do
+        local n = base + k
+        task.spawn(function()
+            local v = FuseCall({ n, n + 1, n + 2, n + 3 })
+            if v == true and not hit then hit = n end
+            pending -= 1
+        end)
+    end
+    local t0 = os.clock()
+    while pending > 0 and os.clock() - t0 < 3 and runId.fuse == id do task.wait(0.03) end
+    if hit then
+        fuseCursor = hit + 4
+        Stats.fuses += 1
+        Stats.fuse = "fuse ok mulai ID " .. hit .. " (lanjut dari " .. fuseCursor .. ")"
+    else
+        fuseCursor = base + FUSE_BATCH
+        Stats.fuse = "scan ID " .. base .. "-" .. (base + FUSE_BATCH + 2)
+    end
+end
+
+-- ===== AUTO BOSS KYUBI =====
+-- Remote: Boss:FireServer("join"). Alur: join berulang -> kalau kamu sudah di dekat boss, serang boss (attack + R + E)
+-- dan DODGE (teleport menyamping) saat boss mulai skill yang mengarah ke kamu.
+-- Sinyal skill boss: (1) animasi yang diputar boss (AnimationController / Animator), (2) efek baru dekat kamu
+-- (nama sama dengan isi ReplicatedStorage.Fx, atau mengandung kata seperti warn / indicator / aoe / hitbox / beam).
+-- Catatan: folder Kurama > InitialPoses di ReplicatedStorage hanya pose bone rig, bukan daftar skill.
+local DODGE_ON, DODGE_DIST, DODGE_HOLD, DODGE_CD = true, 45, 1.6, 1.0
+local BOSS_ARENA, BOSS_JOIN_INT, BOSS_LOG = 300, 3, false
+local BossModel, BossHome
+local bossConns = {}
+local lastDodge, dodgeSide, dodging, lastJoin, bossScanT = 0, 1, false, 0, 0
+
+local function BossRootPart()
+    local m = BossModel
+    if not (m and m.Parent) then return nil end
+    return m:FindFirstChild("HumanoidRootPart") or m.PrimaryPart or m:FindFirstChildWhichIsA("BasePart", true)
+end
+local function BossAlive()
+    local m = BossModel
+    if not (m and m.Parent) then return false end
+    local h = m:FindFirstChildOfClass("Humanoid")
+    if h and h.Health <= 0 then return false end
+    return BossRootPart() ~= nil
+end
+
+local function ScanBoss(parent, depth)
+    for _, c in ipairs(parent:GetChildren()) do
+        if c:IsA("Model") then
+            local n = string.lower(c.Name)
+            if (n:find("kurama", 1, true) or n:find("kyubi", 1, true) or n:find("kyuubi", 1, true) or n:find("nine", 1, true))
+                and (c:FindFirstChildOfClass("Humanoid") or c:FindFirstChildWhichIsA("AnimationController") or c.PrimaryPart) then
+                return c
+            end
+        end
+        if depth > 0 and (c:IsA("Folder") or c.Name == "MyEnemies") then
+            local r = ScanBoss(c, depth - 1)
+            if r then return r end
+        end
+    end
+end
+
+local function Facing()                      -- boss menghadap kita, atau kita sangat dekat
+    local root, hrp = BossRootPart(), Root()
+    if not root or not hrp then return true end
+    local to = hrp.Position - root.Position
+    local flat = Vector3.new(to.X, 0, to.Z)
+    if flat.Magnitude < 1 then return true end
+    return flat.Magnitude < 35 or root.CFrame.LookVector:Dot(flat.Unit) > 0.25
+end
+
+local function Dodge(reason)
+    if not DODGE_ON or dodging or os.clock() - lastDodge < DODGE_CD then return end
+    local hrp, root = Root(), BossRootPart()
+    if not hrp or not root or not Facing() then return end
+    dodging, lastDodge = true, os.clock()
+    local home = BossHome or hrp.Position
+    local to = hrp.Position - root.Position
+    local dir = Vector3.new(to.X, 0, to.Z)
+    dir = dir.Magnitude > 1 and dir.Unit or Vector3.new(0, 0, 1)
+    local side = Vector3.new(-dir.Z, 0, dir.X) * dodgeSide       -- menyamping (tegak lurus arah serangan), bergantian kiri / kanan
+    dodgeSide = -dodgeSide
+    Stats.boss = "dodge · " .. tostring(reason)
+    hrp.CFrame = CFrame.new(hrp.Position + side * DODGE_DIST)
+    pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end)
+    task.delay(DODGE_HOLD, function()
+        local h2 = Root()
+        if h2 and BossBusy then h2.CFrame = CFrame.new(home) end      -- kembali ke posisi bertarung
+        dodging = false
+    end)
+end
+
+local IGNORE_ANIM = { "idle", "walk", "run", "stand", "spawn", "intro", "enter", "death", "die", "dead", "hit", "stun" }
+local function OnBossAnim(track)
+    local name = ""
+    pcall(function() name = string.lower(track.Name ~= "" and track.Name or (track.Animation and track.Animation.Name or "")) end)
+    if BOSS_LOG then print("[BossAnim] " .. name) end
+    for _, w in ipairs(IGNORE_ANIM) do
+        if name:find(w, 1, true) then return end
+    end
+    Dodge("anim " .. name)
+end
+
+local FX_WORDS = { "warn", "indicator", "danger", "telegraph", "aoe", "hitbox", "shockwave", "beam", "slash", "claw", "bijuu", "kurama", "kyubi", "tail" }
+local fxNames = {}
+pcall(function()
+    local fx = RS:FindFirstChild("Fx")
+    if fx then for _, c in ipairs(fx:GetChildren()) do fxNames[string.lower(c.Name)] = true end end
+end)
+local function OnWorkspaceAdded(d)
+    if not (BossBusy and DODGE_ON) then return end
+    if not (d:IsA("BasePart") or d:IsA("Model")) then return end
+    local n = string.lower(d.Name)
+    local hit = fxNames[n]
+    if not hit then
+        for _, w in ipairs(FX_WORDS) do
+            if n:find(w, 1, true) then hit = true; break end
+        end
+    end
+    if not hit then return end
+    local pos
+    if d:IsA("BasePart") then pos = d.Position else local ok, cf = pcall(function() return d:GetPivot() end); pos = ok and cf.Position end
+    local hrp = Root()
+    if pos and hrp and (pos - hrp.Position).Magnitude <= 70 then
+        if BOSS_LOG then print("[BossFx] " .. d.Name) end
+        Dodge("fx " .. d.Name)
+    end
+end
+local fxConn = workspace.DescendantAdded:Connect(OnWorkspaceAdded)
+W.Conns[#W.Conns + 1] = fxConn
+
+local function AttachBoss(m)
+    for _, c in ipairs(bossConns) do pcall(function() c:Disconnect() end) end
+    bossConns = {}
+    local animator = m:FindFirstChildWhichIsA("Animator", true)
+    if animator then bossConns[#bossConns + 1] = animator.AnimationPlayed:Connect(OnBossAnim) end
+end
+
+local bossPulse = NewPulse(function()
+    if not (BossBusy and BossAlive()) then return end
+    local root = BossRootPart()
+    local rc = Remote("Cast")
+    if not (root and rc) then return end
+    local p = root.Position
+    local v = V3(p.X, p.Y, p.Z)
+    pcall(rc.FireServer, rc, "attack", v)
+    pcall(rc.FireServer, rc, "R", v)
+    pcall(rc.FireServer, rc, "E", v)
+    Stats.attacks += 1
+end, 0.01)
+
+local function BossStep(id)
+    local now = os.clock()
+    if not BossAlive() then
+        if now - bossScanT >= 1 then
+            bossScanT = now
+            BossModel = ScanBoss(workspace, 3)
+            if BossModel then AttachBoss(BossModel) end
+        end
+    end
+    local hrp = Root()
+    if BossAlive() and hrp and (BossRootPart().Position - hrp.Position).Magnitude <= BOSS_ARENA then
+        if not BossBusy then
+            BossBusy, BossHome = true, hrp.Position
+            Stats.boss = "bertarung melawan " .. BossModel.Name
+        end
+        bossPulse.on = true
+    else
+        if BossBusy then Stats.boss = "boss selesai / jauh, farm dilanjutkan" end
+        BossBusy, BossHome, bossPulse.on = false, nil, false
+        if now - lastJoin >= BOSS_JOIN_INT then
+            lastJoin = now
+            Call("Boss", "join")
+            if not Stats.boss:find("selesai") then Stats.boss = "join boss..." end
+        end
+    end
+end
+
+local function BossStop()
+    BossBusy, BossHome, bossPulse.on, dodging = false, nil, false, false
+    for _, c in ipairs(bossConns) do pcall(function() c:Disconnect() end) end
+    bossConns = {}
+    BossModel = nil
 end
 
 -- ===== UI =====
@@ -588,6 +933,7 @@ tgTrain = cClick:Toggle({
     Title = "Auto Train", id = "ae_train",
     Callback = function(v)
         if v and tgStage and tgStage.Value then tgStage:Set(false) end     -- Auto Stage & Auto Train sama-sama teleport
+        if v and HATCH_TP and tgHatch and tgHatch.Value then tgHatch:Set(false) end
         Loop("train", v, function() return TRAIN_INT end, TrainStep)
         if not v then Stats.zone = "-" end
         N("Auto Train", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
@@ -615,6 +961,7 @@ tgStage = cStage:Toggle({
     Title = "Auto Stage", Desc = "Attack + skill R/E per stage, claim trophy, ulang otomatis", id = "ae_stage_on",
     Callback = function(v)
         if v and tgTrain and tgTrain.Value then tgTrain:Set(false) end       -- Auto Train & Auto Stage sama-sama teleport
+        if v and HATCH_TP and tgHatch and tgHatch.Value then tgHatch:Set(false) end
         stagePulse.on = false
         stagePulse.acc = 0
         AimPos = nil
@@ -687,15 +1034,23 @@ cHatch:Dropdown({
     end,
 })
 eggLbl = cHatch:Label({ Text = EggPriceText(), Size = 12, Color = "Text" })
-local tgHatch = cHatch:Toggle({
+tgHatch = cHatch:Toggle({
     Title = "Auto Hatch", id = "ae_hatch", Expand = true,
     Callback = function(v)
+        if v and HATCH_TP then      -- hatch teleport ke egg -> bentrok dengan Auto Train / Auto Stage
+            if tgTrain and tgTrain.Value then tgTrain:Set(false) end
+            if tgStage and tgStage.Value then tgStage:Set(false) end
+        end
         Loop("hatch", v, function() return HATCH_INT end, HatchStep)
         if not v then Stats.hatch = "-" end
         N("Auto Hatch", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
     end,
 })
 tgHatch:Sub(function(c)
+    c:Toggle({
+        Title = "Teleport ke egg sebelum hatch", Desc = "Hatch tidak bisa dari jauh", Value = true, id = "ae_hatch_tp",
+        Callback = function(v) HATCH_TP = v end,
+    })
     c:Slider({
         Title = "Jeda antar hatch (s)", Min = 0.05, Max = 5, Value = 0.3, Rounding = 2, Suffix = "s", id = "ae_hatch_int",
         Callback = function(v) HATCH_INT = v end,
@@ -705,6 +1060,116 @@ cHatch:Button({
     Title = "Hatch sekali", Text = "Hatch sekali sekarang",
     Callback = function() task.spawn(HatchStep) end,
 })
+
+local cReward = Main:AddCard({ Title = "Reward", Icon = "gift", Column = 2 })
+local tgReward = cReward:Toggle({
+    Title = "Auto Claim Reward", Desc = "ClaimReward 1, 2, 3", id = "ae_reward", Expand = true,
+    Callback = function(v)
+        Loop("reward", v, function() return REWARD_INT end, RewardStep)
+        N("Auto Claim Reward", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
+    end,
+})
+tgReward:Sub(function(c)
+    c:Slider({
+        Title = "Jeda claim (s)", Min = 2, Max = 600, Value = 30, Rounding = 0, Suffix = "s", id = "ae_reward_int",
+        Callback = function(v) REWARD_INT = v end,
+    })
+end)
+cReward:Button({
+    Title = "Claim sekarang", Text = "Claim reward sekarang",
+    Callback = function() task.spawn(RewardStep); N("Reward", "Dikirim", "#6495ED") end,
+})
+
+local cFuse = Main:AddCard({ Title = "Fuse Pet", Icon = "package", Column = 2 })
+local tgFuse = cFuse:Toggle({
+    Title = "Auto Fuse", Desc = "4 pet sekali fuse, ID terus naik", id = "ae_fuse", Expand = true,
+    Callback = function(v)
+        Loop("fuse", v, function() return FUSE_INT end, FuseStep)
+        if v then fuseCursor = nil end
+        if not v then Stats.fuse = "-" end
+        N("Auto Fuse", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
+    end,
+})
+tgFuse:Sub(function(c)
+    c:Dropdown({
+        Title = "Cara cari ID pet", List = { "Scan data game", "Scan ID bertahap" }, Value = "Scan data game", id = "ae_fuse_mode",
+        Callback = function(v) if v then FUSE_MODE = tostring(v); fuseCursor = nil end end,
+    })
+    c:Slider({
+        Title = "ID awal (mode bertahap)", Min = 1, Max = 5000, Value = 400, Rounding = 0, id = "ae_fuse_start",
+        Callback = function(v) FUSE_START = v; fuseCursor = nil end,
+    })
+    c:Slider({
+        Title = "ID maksimal (mode bertahap)", Min = 100, Max = 20000, Value = 3000, Rounding = 0, id = "ae_fuse_max",
+        Callback = function(v) FUSE_MAX = v end,
+    })
+    c:Slider({
+        Title = "Jendela dicoba sekaligus", Min = 1, Max = 12, Value = 6, Rounding = 0, id = "ae_fuse_batch",
+        Callback = function(v) FUSE_BATCH = v end,
+    })
+    c:Slider({
+        Title = "Jeda antar putaran (s)", Min = 0.1, Max = 10, Value = 1, Rounding = 1, Suffix = "s", id = "ae_fuse_int",
+        Callback = function(v) FUSE_INT = v end,
+    })
+    c:Button({
+        Title = "Scan ID pet (print)", Text = "Scan ID pet (print ke console)",
+        Callback = function()
+            petIdT = 0
+            task.spawn(function()
+                local ids = CollectPetIds()
+                print("[Fuse] ID pet terbaca (" .. #ids .. "): " .. table.concat(ids, ", "))
+                N("Scan ID pet", #ids .. " ID terbaca (lihat console F9)", "#6495ED", 4)
+            end)
+        end,
+    })
+end)
+
+local cBoss = Main:AddCard({ Title = "Boss Kyubi", Icon = "swords", Column = 2 })
+local tgBoss = cBoss:Toggle({
+    Title = "Auto Boss Kyubi", Desc = "Join + serang + dodge otomatis", id = "ae_boss", Expand = true,
+    Callback = function(v)
+        if not v then BossStop() end
+        Loop("boss", v, function() return 0.25 end, BossStep)
+        if not v then Stats.boss = "-" end
+        N("Auto Boss Kyubi", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
+    end,
+})
+tgBoss:Sub(function(c)
+    c:Toggle({ Title = "Dodge otomatis (teleport menyamping)", Value = true, id = "ae_boss_dodge", Callback = function(v) DODGE_ON = v end })
+    c:Slider({
+        Title = "Jarak dodge (stud)", Min = 10, Max = 150, Value = 45, Rounding = 0, id = "ae_boss_dist",
+        Callback = function(v) DODGE_DIST = v end,
+    })
+    c:Slider({
+        Title = "Lama di posisi dodge (s)", Min = 0.5, Max = 5, Value = 1.6, Rounding = 1, Suffix = "s", id = "ae_boss_hold",
+        Callback = function(v) DODGE_HOLD = v end,
+    })
+    c:Slider({
+        Title = "Jeda minimum antar dodge (s)", Min = 0.3, Max = 5, Value = 1, Rounding = 1, Suffix = "s", id = "ae_boss_cd",
+        Callback = function(v) DODGE_CD = v end,
+    })
+    c:Slider({
+        Title = "Jarak dianggap sedang bertarung", Min = 100, Max = 1000, Value = 300, Rounding = 0, id = "ae_boss_arena",
+        Callback = function(v) BOSS_ARENA = v end,
+    })
+    c:Slider({
+        Title = "Jeda kirim join (s)", Min = 1, Max = 30, Value = 3, Rounding = 0, Suffix = "s", id = "ae_boss_join",
+        Callback = function(v) BOSS_JOIN_INT = v end,
+    })
+    c:Toggle({
+        Title = "Log sinyal boss ke console (kalibrasi)", Desc = "Cetak nama animasi / efek skill boss", id = "ae_boss_log",
+        Callback = function(v) BOSS_LOG = v end,
+    })
+    c:Button({
+        Title = "Tes dodge", Text = "Tes dodge sekarang",
+        Callback = function()
+            local was = DODGE_ON
+            DODGE_ON, lastDodge = true, 0
+            Dodge("tes")
+            DODGE_ON = was
+        end,
+    })
+end)
 
 local cStat = Main:AddCard({ Title = "Status", Icon = "activity", Column = 2 })
 local stLbl = cStat:Label({ Text = "-", Size = 11, Color = "Text" })
@@ -718,7 +1183,9 @@ task.spawn(function()
                 "\nStage: " .. Stats.stage .. "   Error: " .. Stats.errors ..
                 "\nZona train: " .. Stats.zone ..
                 "\nPop: " .. Stats.pop .. "   klik: " .. Stats.popClicks ..
-                "\nHatch: " .. Stats.hatch .. "   total egg: " .. Stats.hatches
+                "\nHatch: " .. Stats.hatch .. "   total egg: " .. Stats.hatches ..
+                "\nFuse: " .. Stats.fuse .. "   total: " .. Stats.fuses ..
+                "\nReward: " .. Stats.claims .. "x   Boss: " .. Stats.boss
             stLbl:SetText(txt)
         end)
     end
@@ -726,6 +1193,7 @@ end)
 
 -- hentikan semua saat Unload
 W:OnUnload(function()
+    BossStop()
     for _, p in ipairs(pulses) do p.on = false end
     for k in pairs(runId) do runId[k] += 1 end
 end)
