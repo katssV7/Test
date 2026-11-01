@@ -511,10 +511,10 @@ end
 --     Jadi dodge tidak perlu menebak dari animasi: cukup pastikan posisi kita di luar semua zona saat waktu `hit`.
 --   * Pemain hanya bisa melukai boss saat phase "fight", berada di dalam arena (INSIDE_RADIUS dari CENTRE) dan tidak sedang KO ("down").
 local BOSS_KEYS  = { "kurama", "kyubi", "kyuubi" }       -- hanya cadangan kalau modul Boss tidak bisa di-require
-local DODGE_DIST, DODGE_HOLD, BOSS_MARGIN = 120, 0.8, 6  -- jarak cari tempat aman, tahan setelah serangan, margin zona (stud)
+local DODGE_DIST, DODGE_HOLD, BOSS_MARGIN = 120, 0.4, 10 -- jarak cari tempat aman, tahan setelah serangan, margin zona (stud)
 local bossModel, bossScanT, bossJoinT = nil, 0, 0
 local bossTick, bossDown = 0, false
-local dodgeCount, dodgeHome = 0, nil
+local dodgeCount = 0
 local bossConn
 
 local BossCfg, BOSS_CENTRE, BOSS_INSIDE, BOSS_CHEST = nil, nil, 200, 10
@@ -649,7 +649,22 @@ local function Unsafe(p, shapes)
     return false
 end
 
+-- Waypoint aman buatan sendiri (opsional): posisi di dalam arena yang jarang kena serangan, mis. V(x, y, z).
+-- Kalau diisi, dipilih yang TIDAK kena zona serangan dan paling dekat dengan posisi kamu.
+-- Kalau kosong, titik aman dihitung otomatis dari zona serangan.
+local SAFE_SPOTS = {
+    -- V(0, 4, 0),
+}
+
 local function FindSafe(from, shapes)
+    local best, bd
+    for _, sp in ipairs(SAFE_SPOTS) do
+        if not Unsafe(sp, shapes) then
+            local d = (sp - from).Magnitude
+            if not bd or d < bd then best, bd = sp, d end
+        end
+    end
+    if best then return best end
     for dist = 15, DODGE_DIST, 15 do
         for i = 0, 15 do
             local a = i * math.pi / 8
@@ -663,36 +678,31 @@ local function FindSafe(from, shapes)
     end
 end
 
--- tunggu mendekati waktu kena, kalau posisi kita ada di zona -> pindah ke titik aman, tahan, lalu kembali
+-- Agresif: begitu event serangan diterima (jauh sebelum waktu kena), cek posisi tiap 0.03 detik sampai serangan lewat.
+-- Kalau posisi kita masuk zona -> langsung pindah ke titik aman dan TETAP di sana (tidak kembali ke posisi awal).
 local function Evade(hit, shapes, name)
-    local ping = 0.1
-    pcall(function() ping = LP:GetNetworkPing() end)
-    local w = hit - workspace:GetServerTimeNow() - (ping + 0.3)
-    if w > 0 then task.wait(w) end
-    if os.clock() - bossTick > 1.5 then return end
-    local hrp = Root()
-    if not hrp or not Unsafe(hrp.Position, shapes) then return end
-
-    dodgeCount += 1
-    if not dodgeHome then dodgeHome = hrp.CFrame end
-    local dest = FindSafe(hrp.Position, shapes) or (hrp.Position + Vector3.new(0, 80, 0))   -- tidak ada titik aman: naik
-    hrp.CFrame = CFrame.new(dest)
-    pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end)
-    hrp.Anchored = true
-    Stats.dodges += 1
-    Stats.boss = "dodge " .. tostring(name)
-
-    task.wait(math.max(hit - workspace:GetServerTimeNow() + DODGE_HOLD, 0.3))
-    dodgeCount -= 1
-    if dodgeCount <= 0 then
-        dodgeCount = 0
-        local h2 = Root()
-        if h2 then
-            h2.Anchored = false
-            if dodgeHome then h2.CFrame = dodgeHome end
-            pcall(function() h2.AssemblyLinearVelocity = Vector3.zero end)
+    local moved = false
+    while workspace:GetServerTimeNow() < hit + 0.15 do
+        if os.clock() - bossTick > 1.5 then break end
+        local hrp = Root()
+        if hrp and Unsafe(hrp.Position, shapes) then
+            if not moved then moved = true; dodgeCount += 1; Stats.dodges += 1 end
+            local dest = FindSafe(hrp.Position, shapes) or (hrp.Position + Vector3.new(0, 80, 0))   -- tidak ada titik aman: naik
+            hrp.Anchored = false
+            hrp.CFrame = CFrame.new(dest)
+            pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end)
+            hrp.Anchored = true
+            Stats.boss = "dodge " .. tostring(name)
         end
-        dodgeHome = nil
+        task.wait(0.03)
+    end
+    if moved then
+        task.wait(DODGE_HOLD)
+        dodgeCount = math.max(dodgeCount - 1, 0)
+        if dodgeCount == 0 then
+            local h2 = Root()
+            if h2 then h2.Anchored = false end
+        end
     end
 end
 
@@ -1063,11 +1073,11 @@ tgBoss:Sub(function(c)
         Callback = function(v) DODGE_DIST = v end,
     })
     c:Slider({
-        Title = "Tahan di tempat aman setelah serangan (s)", Min = 0.2, Max = 3, Value = 0.8, Rounding = 1, Suffix = "s", id = "ae_boss_hold",
+        Title = "Tahan di tempat aman setelah serangan (s)", Min = 0.1, Max = 3, Value = 0.4, Rounding = 1, Suffix = "s", id = "ae_boss_hold",
         Callback = function(v) DODGE_HOLD = v end,
     })
     c:Slider({
-        Title = "Margin zona bahaya (stud)", Min = 0, Max = 20, Value = 6, Rounding = 0, id = "ae_boss_margin",
+        Title = "Margin zona bahaya (stud)", Min = 0, Max = 30, Value = 10, Rounding = 0, id = "ae_boss_margin",
         Callback = function(v) BOSS_MARGIN = v end,
     })
 end)
