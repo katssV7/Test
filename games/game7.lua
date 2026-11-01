@@ -678,25 +678,60 @@ local function FindSafe(from, shapes)
     end
 end
 
--- Agresif: begitu event serangan diterima (jauh sebelum waktu kena), cek posisi tiap 0.03 detik sampai serangan lewat.
--- Kalau posisi kita masuk zona -> langsung pindah ke titik aman dan TETAP di sana (tidak kembali ke posisi awal).
+-- Slide: karakter meluncur cepat ke titik aman (bukan teleport), jadi server melihat gerakan kontinu.
+local SLIDE_SPEED = 150                 -- stud/detik
+local slideGoal, slideRun = nil, false
+
+local function SlideTo(dest)
+    slideGoal = dest
+    if slideRun then return end
+    slideRun = true
+    task.spawn(function()
+        while slideGoal do
+            local dt = RunService.Heartbeat:Wait()
+            local hrp = Root()
+            if not hrp then break end
+            hrp.Anchored = false
+            local delta = slideGoal - hrp.Position
+            local dist = delta.Magnitude
+            local step = SLIDE_SPEED * dt
+            if dist <= step then
+                hrp.CFrame = CFrame.new(slideGoal) * (hrp.CFrame - hrp.CFrame.Position)
+                pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end)
+                slideGoal = nil
+            else
+                local dir = delta.Unit
+                hrp.CFrame = CFrame.new(hrp.Position + dir * step) * (hrp.CFrame - hrp.CFrame.Position)
+                pcall(function() hrp.AssemblyLinearVelocity = dir * SLIDE_SPEED end)
+            end
+        end
+        slideGoal = nil
+        slideRun = false
+    end)
+end
+
+-- Agresif: begitu event serangan diterima, cek posisi tiap frame sampai serangan lewat.
+-- Kalau posisi / tujuan masuk zona -> slide cepat ke titik aman terdekat dan TETAP di sana.
 local function Evade(hit, shapes, name)
     local moved = false
     while workspace:GetServerTimeNow() < hit + 0.15 do
         if os.clock() - bossTick > 1.5 then break end
         local hrp = Root()
-        if hrp and Unsafe(hrp.Position, shapes) then
-            if not moved then moved = true; dodgeCount += 1; Stats.dodges += 1 end
-            local dest = FindSafe(hrp.Position, shapes) or (hrp.Position + Vector3.new(0, 80, 0))   -- tidak ada titik aman: naik
-            hrp.Anchored = false
-            hrp.CFrame = CFrame.new(dest)
-            pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end)
-            hrp.Anchored = true
-            Stats.boss = "dodge " .. tostring(name)
+        if hrp then
+            local goalBad = slideGoal and Unsafe(slideGoal, shapes)
+            if (not slideGoal and Unsafe(hrp.Position, shapes)) or goalBad then
+                if not moved then moved = true; dodgeCount += 1; Stats.dodges += 1 end
+                local dest = FindSafe(hrp.Position, shapes) or (hrp.Position + Vector3.new(0, 80, 0))
+                SlideTo(dest)
+                Stats.boss = "slide " .. tostring(name)
+            end
         end
         task.wait(0.03)
     end
     if moved then
+        while slideGoal do task.wait(0.03) end      -- tunggu sampai tiba
+        local h1 = Root()
+        if h1 then h1.Anchored = true end
         task.wait(DODGE_HOLD)
         dodgeCount = math.max(dodgeCount - 1, 0)
         if dodgeCount == 0 then
@@ -1075,6 +1110,10 @@ tgBoss:Sub(function(c)
     c:Slider({
         Title = "Tahan di tempat aman setelah serangan (s)", Min = 0.1, Max = 3, Value = 0.4, Rounding = 1, Suffix = "s", id = "ae_boss_hold",
         Callback = function(v) DODGE_HOLD = v end,
+    })
+    c:Slider({
+        Title = "Kecepatan slide (stud/detik)", Min = 40, Max = 400, Value = 150, Rounding = 0, id = "ae_boss_speed",
+        Callback = function(v) SLIDE_SPEED = v end,
     })
     c:Slider({
         Title = "Margin zona bahaya (stud)", Min = 0, Max = 30, Value = 10, Rounding = 0, id = "ae_boss_margin",
