@@ -502,16 +502,37 @@ local function InstallFuseHook()
 end
 
 -- ===== AUTO BOSS KYUBI =====
--- Boss:FireServer("join") dikirim berkala sampai model Kyubi muncul di workspace, lalu serang ke arah Kyubi
--- (memakai pulse attack yang sama dengan Auto Stage). Dodge: tiap kali Kyubi mulai memainkan animasi serangan
--- (animasi selain idle/walk/run/dll), karakter di-teleport menjauh sebentar lalu dikembalikan.
-local BOSS_KEYS  = { "kurama", "kyubi", "kyuubi" }
-local IDLE_WORDS = { "idle", "walk", "run", "move", "stand", "float", "hover", "breath", "spawn" }
-local DODGE_DIST, DODGE_HOLD, DODGE_FACING = 120, 1.5, false
+-- Berdasarkan script klien Boss milik game:
+--   * Status boss ada di atribut workspace: BossPhase ("wait" / "coming" / "fight" / "over"), BossHp (0..1), BossX, BossZ.
+--   * Join: Remotes.Boss:FireServer("join"). Boleh dikirim saat phase "coming" atau "fight".
+--   * Serangan boss dikirim server ke semua klien lewat Remotes.Boss.OnClientEvent sebagai batch { {t="atk", ...} }:
+--       k = nama serangan, hit = waktu kena (server time), sh = daftar zona bahaya
+--       { kind = "circle" | "ring" | "cone", x, z, radius, inner?, yaw?, half? }.
+--     Jadi dodge tidak perlu menebak dari animasi: cukup pastikan posisi kita di luar semua zona saat waktu `hit`.
+--   * Pemain hanya bisa melukai boss saat phase "fight", berada di dalam arena (INSIDE_RADIUS dari CENTRE) dan tidak sedang KO ("down").
+local BOSS_KEYS  = { "kurama", "kyubi", "kyuubi" }       -- hanya cadangan kalau modul Boss tidak bisa di-require
+local DODGE_DIST, DODGE_HOLD, BOSS_MARGIN = 120, 0.8, 6  -- jarak cari tempat aman, tahan setelah serangan, margin zona (stud)
 local bossModel, bossScanT, bossJoinT = nil, 0, 0
-local bossAnims, bossAnimT = {}, 0
-local bossSeen = setmetatable({}, { __mode = "k" })
-local dodging = false
+local bossTick, bossDown = 0, false
+local dodgeCount, dodgeHome = 0, nil
+local bossConn
+
+local BossCfg, BOSS_CENTRE, BOSS_INSIDE, BOSS_CHEST = nil, nil, 200, 10
+pcall(function()
+    BossCfg = require(RS:WaitForChild("Shared", 5):WaitForChild("Logic", 5):WaitForChild("Boss", 5))
+end)
+if type(BossCfg) == "table" then
+    if typeof(BossCfg.CENTRE) == "Vector3" then BOSS_CENTRE = BossCfg.CENTRE end
+    if type(BossCfg.INSIDE_RADIUS) == "number" then BOSS_INSIDE = BossCfg.INSIDE_RADIUS end
+    if type(BossCfg.CHEST) == "number" then BOSS_CHEST = BossCfg.CHEST end
+end
+
+local function BossPhase()
+    local p = workspace:GetAttribute("BossPhase")
+    return type(p) == "string" and p or "wait"
+end
+
+local function Flat(v) return math.sqrt(v.X * v.X + v.Z * v.Z) end
 
 local function InAnyChar(d)
     for _, pl in ipairs(Players:GetPlayers()) do
@@ -523,6 +544,7 @@ local function BossRoot(m)
     return m.PrimaryPart or m:FindFirstChild("HumanoidRootPart") or m:FindFirstChildWhichIsA("BasePart", true)
 end
 
+-- cadangan: cari model boss berdasarkan nama (dipakai hanya kalau CENTRE tidak terbaca)
 local function FindBoss()
     if bossModel and bossModel.Parent and bossModel:IsDescendantOf(workspace) then return bossModel end
     bossModel = nil
@@ -537,41 +559,40 @@ local function FindBoss()
             for _, key in ipairs(BOSS_KEYS) do
                 if string.find(l, key, 1, true) then
                     local r = BossRoot(d)
-                    if r and (d:FindFirstChildWhichIsA("Humanoid", true) or d:FindFirstChildWhichIsA("Animator", true)) then
+                    if r then
                         local sz = r.Size.Magnitude
-                        if sz > bs then best, bs = d, sz end        -- ambil yang terbesar
+                        if sz > bs then best, bs = d, sz end
                     end
                     break
                 end
             end
         end
     end
-    if best then bossModel = best; bossAnims = {}; bossAnimT = 0 end
+    bossModel = best
     return bossModel
 end
 
-local function BossAttackName(m)         -- nama animasi serangan yang BARU mulai dimainkan, atau nil
-    if os.clock() - bossAnimT > 2 then
-        bossAnimT = os.clock(); bossAnims = {}
-        for _, a in ipairs(m:GetDescendants()) do
-            if a:IsA("Animator") then bossAnims[#bossAnims + 1] = a end
-        end
+-- posisi boss: XZ dari atribut server, Y dari CENTRE (+ tinggi dada); cadangan: model bernama Kurama
+local function BossPos()
+    local bx, bz = workspace:GetAttribute("BossX"), workspace:GetAttribute("BossZ")
+    if type(bx) == "number" and type(bz) == "number" and BOSS_CENTRE then
+        return Vector3.new(bx, BOSS_CENTRE.Y + BOSS_CHEST, bz)
     end
-    for _, an in ipairs(bossAnims) do
-        local ok, tracks = pcall(an.GetPlayingAnimationTracks, an)
-        if ok then
-            for _, tr in ipairs(tracks) do
-                if not bossSeen[tr] then
-                    bossSeen[tr] = true
-                    local nm, idle = string.lower(tr.Name), false
-                    for _, w in ipairs(IDLE_WORDS) do
-                        if string.find(nm, w, 1, true) then idle = true; break end
-                    end
-                    if not idle then return tr.Name end
-                end
-            end
-        end
+    local m = FindBoss()
+    local r = m and BossRoot(m)
+    if r then
+        if type(bx) == "number" and type(bz) == "number" then return Vector3.new(bx, r.Position.Y, bz) end
+        return r.Position
     end
+end
+
+-- sama seperti syarat target di script game: dalam radius arena dan beda tinggi < 80
+local function InArena()
+    local hrp = Root()
+    if not hrp then return false end
+    if not BOSS_CENTRE then return true end
+    local d = hrp.Position - BOSS_CENTRE
+    return Flat(d) <= BOSS_INSIDE and math.abs(d.Y) < 80
 end
 
 local function GroundAt(pos)
@@ -582,58 +603,173 @@ local function GroundAt(pos)
     return r and r.Position
 end
 
-local function Dodge(boss, why)
-    if dodging then return end
-    local hrp, br = Root(), BossRoot(boss)
-    if not (hrp and br) then return end
-    local to = hrp.Position - br.Position
-    local flat = Vector3.new(to.X, 0, to.Z)
-    if DODGE_FACING and flat.Magnitude > 1 and br.CFrame.LookVector:Dot(flat.Unit) < 0.3 then return end   -- tidak menghadap kita
-    dodging = true
-    Stats.dodges += 1
-    Stats.boss = "dodge (" .. tostring(why) .. ")"
-    task.spawn(function()
-        local home = hrp.CFrame
-        local dir = flat.Magnitude > 1 and flat.Unit or Vector3.new(1, 0, 0)
-        local side = Vector3.new(-dir.Z, 0, dir.X)
-        local dest
-        for _, c in ipairs({ (dir + side).Unit, (dir - side).Unit, dir }) do
-            local g = GroundAt(hrp.Position + c * DODGE_DIST)
-            if g then dest = g + Vector3.new(0, 4, 0); break end
+-- ---------- zona bahaya ----------
+local function ParseShapes(sh)
+    local out = {}
+    if type(sh) ~= "table" then return out end
+    for _, s in ipairs(sh) do
+        if type(s) == "table" and type(s.x) == "number" and type(s.z) == "number" and type(s.radius) == "number"
+            and (s.kind == "circle" or s.kind == "ring" or s.kind == "cone") then
+            out[#out + 1] = { kind = s.kind, x = s.x, z = s.z, radius = s.radius,
+                inner = type(s.inner) == "number" and s.inner or nil,
+                yaw = type(s.yaw) == "number" and s.yaw or 0,
+                half = type(s.half) == "number" and s.half or nil }
         end
-        dest = dest or (hrp.Position + Vector3.new(0, 80, 0))       -- tidak ada tanah: menghindar ke atas
-        hrp.CFrame = CFrame.new(dest)
-        pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end)
-        hrp.Anchored = true
-        task.wait(DODGE_HOLD)
+    end
+    return out
+end
+
+local function InShape(s, p)
+    local dx, dz = p.X - s.x, p.Z - s.z
+    local d = math.sqrt(dx * dx + dz * dz)
+    local m = BOSS_MARGIN
+    if s.kind == "circle" then
+        return d <= s.radius + m
+    elseif s.kind == "ring" then
+        return d <= s.radius + m and d >= (s.inner or 0) - m
+    else -- cone
+        if d > s.radius + m then return false end
+        if d < 1 then return true end
+        local half = s.half or (math.pi / 4)
+        if half > 3.2 then half = math.rad(half) end            -- kalau ternyata derajat
+        local sy, cy = math.sin(s.yaw), math.cos(s.yaw)
+        -- arah yaw belum pasti (sin,cos) atau (-sin,-cos): cek keduanya, anggap kena kalau salah satu cocok
+        for _, f in ipairs({ { sy, cy }, { -sy, -cy } }) do
+            local ang = math.acos(math.clamp((dx * f[1] + dz * f[2]) / d, -1, 1))
+            if ang <= half + 0.1 then return true end
+        end
+        return false
+    end
+end
+
+local function Unsafe(p, shapes)
+    for _, s in ipairs(shapes) do
+        if InShape(s, p) then return true end
+    end
+    return false
+end
+
+local function FindSafe(from, shapes)
+    for dist = 15, DODGE_DIST, 15 do
+        for i = 0, 15 do
+            local a = i * math.pi / 8
+            local c = from + Vector3.new(math.cos(a) * dist, 0, math.sin(a) * dist)
+            local inside = (not BOSS_CENTRE) or Flat(c - BOSS_CENTRE) <= BOSS_INSIDE * 0.9
+            if inside and not Unsafe(c, shapes) then
+                local g = GroundAt(c)
+                if g then return g + Vector3.new(0, 4, 0) end
+            end
+        end
+    end
+end
+
+-- tunggu mendekati waktu kena, kalau posisi kita ada di zona -> pindah ke titik aman, tahan, lalu kembali
+local function Evade(hit, shapes, name)
+    local ping = 0.1
+    pcall(function() ping = LP:GetNetworkPing() end)
+    local w = hit - workspace:GetServerTimeNow() - (ping + 0.3)
+    if w > 0 then task.wait(w) end
+    if os.clock() - bossTick > 1.5 then return end
+    local hrp = Root()
+    if not hrp or not Unsafe(hrp.Position, shapes) then return end
+
+    dodgeCount += 1
+    if not dodgeHome then dodgeHome = hrp.CFrame end
+    local dest = FindSafe(hrp.Position, shapes) or (hrp.Position + Vector3.new(0, 80, 0))   -- tidak ada titik aman: naik
+    hrp.CFrame = CFrame.new(dest)
+    pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end)
+    hrp.Anchored = true
+    Stats.dodges += 1
+    Stats.boss = "dodge " .. tostring(name)
+
+    task.wait(math.max(hit - workspace:GetServerTimeNow() + DODGE_HOLD, 0.3))
+    dodgeCount -= 1
+    if dodgeCount <= 0 then
+        dodgeCount = 0
         local h2 = Root()
         if h2 then
             h2.Anchored = false
-            h2.CFrame = home
+            if dodgeHome then h2.CFrame = dodgeHome end
             pcall(function() h2.AssemblyLinearVelocity = Vector3.zero end)
         end
-        dodging = false
-    end)
+        dodgeHome = nil
+    end
+end
+
+local function OnBossEvent(ev)
+    if os.clock() - bossTick > 1.5 then return end        -- hanya saat Auto Boss aktif
+    local t = ev.t
+    if t == "atk" then
+        local shapes = ParseShapes(ev.sh)
+        if type(ev.hit) == "number" and #shapes > 0 then
+            task.spawn(Evade, ev.hit, shapes, ev.k)
+        end
+    elseif t == "down" then
+        bossDown = true
+    elseif t == "up" or t == "dend" or t == "end" then
+        bossDown = false
+    end
+end
+
+local function EnsureBossListener()
+    if bossConn and bossConn.Connected then return end
+    local r = Remote("Boss")
+    if r and r:IsA("RemoteEvent") then
+        bossConn = r.OnClientEvent:Connect(function(batch)
+            if type(batch) ~= "table" then return end
+            for _, ev in ipairs(batch) do
+                if type(ev) == "table" then pcall(OnBossEvent, ev) end
+            end
+        end)
+        W.Conns[#W.Conns + 1] = bossConn
+    end
 end
 
 local function BossStep()
-    local boss = FindBoss()
-    if not boss then
+    bossTick = os.clock()
+    EnsureBossListener()
+    local phase = BossPhase()
+
+    if phase == "wait" or phase == "over" then
+        stagePulse.on = false; AimPos = nil
+        Stats.boss = "menunggu boss muncul (" .. phase .. ")"
+        return
+    end
+
+    if not InArena() then                                  -- belum di arena: kirim join berkala
         stagePulse.on = false; AimPos = nil
         if os.clock() - bossJoinT >= 3 then
             bossJoinT = os.clock()
             Call("Boss", "join")
         end
-        Stats.boss = "join dikirim, menunggu Kyubi muncul"
+        Stats.boss = "join dikirim (" .. phase .. ")"
         return
     end
-    local br = BossRoot(boss)
-    if not br then return end
-    AimPos = br.Position
+
+    if phase ~= "fight" then                               -- "coming": sudah di arena, tunggu mulai
+        stagePulse.on = false; AimPos = nil
+        Stats.boss = "di arena, menunggu fight mulai"
+        return
+    end
+
+    if bossDown then                                       -- KO: tidak bisa menyerang
+        stagePulse.on = false; AimPos = nil
+        Stats.boss = "KO, menunggu revive / selesai"
+        return
+    end
+
+    local pos = BossPos()
+    if not pos then
+        stagePulse.on = false; AimPos = nil
+        Stats.boss = "posisi boss belum terbaca"
+        return
+    end
+    AimPos = pos
     stagePulse.on = true
-    if not dodging then Stats.boss = "melawan " .. boss.Name .. (#bossAnims == 0 and " (Animator tidak ketemu)" or "") end
-    local why = BossAttackName(boss)
-    if why then Dodge(boss, why) end
+    if dodgeCount == 0 then
+        local hp = workspace:GetAttribute("BossHp")
+        Stats.boss = "fight" .. (type(hp) == "number" and string.format(" · HP %d%%", math.floor(hp * 100 + 0.5)) or "")
+    end
 end
 
 -- ===== AUTO CLICK POP (bubble "x2!") =====
@@ -912,7 +1048,7 @@ codeLbl = cCodes:Label({ Text = "-", Size = 11, Color = "Text" })
 -- Boss Kyubi
 local cBoss = Main:AddCard({ Title = "Boss Kyubi", Icon = "flame", Column = 1 })
 tgBoss = cBoss:Toggle({
-    Title = "Auto Boss Kyubi", Desc = "Join, serang, dan dodge skill Kyubi", id = "ae_boss", Expand = true,
+    Title = "Auto Boss Kyubi", Desc = "Join, serang, dan keluar dari zona serangan Kyubi", id = "ae_boss", Expand = true,
     Callback = function(v)
         if v then OffOthers(tgBoss) end
         stagePulse.on = false; stagePulse.acc = 0; AimPos = nil
@@ -923,16 +1059,16 @@ tgBoss = cBoss:Toggle({
 })
 tgBoss:Sub(function(c)
     c:Slider({
-        Title = "Jarak dodge (stud)", Min = 30, Max = 250, Value = 120, Rounding = 0, id = "ae_boss_dist",
+        Title = "Jarak maks cari tempat aman (stud)", Min = 30, Max = 250, Value = 120, Rounding = 0, id = "ae_boss_dist",
         Callback = function(v) DODGE_DIST = v end,
     })
     c:Slider({
-        Title = "Lama menghindar (s)", Min = 0.5, Max = 4, Value = 1.5, Rounding = 1, Suffix = "s", id = "ae_boss_hold",
+        Title = "Tahan di tempat aman setelah serangan (s)", Min = 0.2, Max = 3, Value = 0.8, Rounding = 1, Suffix = "s", id = "ae_boss_hold",
         Callback = function(v) DODGE_HOLD = v end,
     })
-    c:Toggle({
-        Title = "Dodge hanya jika Kyubi menghadap kita", id = "ae_boss_facing",
-        Callback = function(v) DODGE_FACING = v end,
+    c:Slider({
+        Title = "Margin zona bahaya (stud)", Min = 0, Max = 20, Value = 6, Rounding = 0, id = "ae_boss_margin",
+        Callback = function(v) BOSS_MARGIN = v end,
     })
 end)
 
