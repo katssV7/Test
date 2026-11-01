@@ -1,7 +1,7 @@
 -- KatssinnnHub | Game 7 (Anime Eyes)
 -- Sidebar: Home / Main / Player / Settings (library: ui.lua)
 -- Fitur: World/Teleport, Auto Hatch, Auto Click, Auto Train (teleport sesuai rebirth), Auto Stage (serang musuh di MyEnemies per stage -> claim trophy),
---        Redeem Codes, Auto Rebirth, Auto Equip Best Pet, Remote Logger.
+--        Redeem Codes, Auto Rebirth, Auto Equip Best Pet.
 local BASE = "https://raw.githubusercontent.com/katssV7/Test/refs/heads/main/"
 local UI = loadstring(game:HttpGet(BASE .. "ui.lua"))()
 
@@ -140,7 +140,7 @@ local WORLDS = {
             [1] = V(3019, 6, -111),  [2] = V(3015, 7, -198),  [3] = V(3016, 8, -200),   -- stage 3: z -200 sesuai catatan (cek, mungkin -290)
             [4] = V(3021, 6, -380),  [5] = V(3020, 5, -471),  [6] = V(3019, 7, -561),  [7] = V(3020, 7, -652),  [8] = V(3019, 5, -741),
             [9] = V(3018, 5, -829),  [10] = V(3020, 5, -922), [11] = V(3018, 7, -1009), [12] = V(3018, 7, -1102), [13] = V(3021, 7, -1192),
-            [14] = V(3019, 7, -1280), [15] = V(3021, 5, -1321),                          -- stage 15: z -1321 sesuai catatan (cek, mungkin -1371)
+            [14] = V(3019, 7, -1280), [15] = V(3020, 6, -1370),
         },
         train = {
             { 64, V(2939, 4, 38) },  { 66, V(2909, 5, 38) },  { 69, V(2857, 4, 37) },  { 72, V(2939, 4, 64) },  { 77, V(2883, 4, 64) },
@@ -208,7 +208,7 @@ end
 local clickPulse = NewPulse(function()
     local r = Remote("Train")
     if r then pcall(r.FireServer, r); Stats.clicks += 1 end
-end, 0.1)
+end, 0.01)
 
 local function Rebirth(id)
     task.spawn(function()
@@ -226,8 +226,8 @@ end
 -- ===== AUTO TRAIN (teleport ke zona train sesuai rebirth, mengikuti World terpilih) =====
 -- Zona train tiap world ada di WORLDS[...].train. Zona yang dipakai = syarat terbesar yang MASIH <= rebirth pemain.
 -- Contoh World 1: rebirth 3/4/5 tetap di zona "2 REBIRTH"; baru pindah ke zona 6 saat rebirth sudah 6.
-local TRAIN_STAY = 12     -- kalau lebih jauh dari ini (stud) dari titik train, teleport lagi
-local TRAIN_INT = 1       -- jeda cek (detik)
+local TRAIN_STAY = 10     -- kalau lebih jauh dari ini (stud) dari titik train, teleport lagi
+local TRAIN_INT = 0.5     -- jeda cek (detik)
 
 local function GetRebirth()
     local ls = LP:FindFirstChild("leaderstats")
@@ -375,19 +375,9 @@ end
 
 -- ===== AUTO CLICK POP (bubble "x2!") =====
 -- Pop muncul sebagai objek GUI di  PlayerGui > Main > HUD > Pops  dan HARUS di-klik (claim lewat remote saja tidak berpengaruh).
--- Script memantau folder itu; begitu ada pop yang tampil di layar, posisinya dibaca lalu pop di-klik otomatis:
---   1) kalau pop berupa tombol: sinyal klik tombol dipicu (firesignal)
---   2) kalau pop masih ada sesudahnya (atau bukan tombol): klik layar di titik tengah pop lewat VirtualInputManager.
-local GuiService = game:GetService("GuiService")
-local VIM
-pcall(function() VIM = game:GetService("VirtualInputManager") end)
-
-local POP_MODE   = "Sinyal + touch"   -- "Sinyal + touch" | "Touch" | "Sinyal saja" | "Sinyal + mouse" | "Mouse"
--- PENTING (HP): mode berawalan "Mouse" mengirim input mouse sehingga Roblox mengira kamu pakai PC (joystick & tombol lompat hilang).
--- Pakai "Sinyal + touch" / "Touch" / "Sinyal saja": tidak ada input mouse sama sekali.
-local POP_SETTLE = 0.25               -- pop harus sudah tampil selama ini sebelum diklik (animasi muncul selesai)
-local POP_RETRY  = 0.6                -- kalau pop masih ada, klik lagi setelah jeda ini
-local POP_YOFF   = 0                  -- koreksi manual posisi Y klik (px) kalau klik meleset
+-- Script memantau folder itu; begitu ada pop yang tampil, sinyal klik tombolnya dipicu langsung (tanpa input mouse/touch,
+-- jadi kontrol HP tidak terganggu).
+local POP_RETRY = 0.6                 -- kalau pop masih ada, picu lagi setelah jeda ini
 local popsCache, popsScanT = nil, 0
 local popSeen = setmetatable({}, { __mode = "k" })
 
@@ -431,14 +421,6 @@ local function PopObject(c)
     return c:FindFirstChildWhichIsA("GuiObject", true)
 end
 
-local function CenterOf(g)
-    local pos, size = g.AbsolutePosition, g.AbsoluteSize
-    local x, y = pos.X + size.X / 2, pos.Y + size.Y / 2
-    local sg = g:FindFirstAncestorOfClass("ScreenGui")
-    if sg and not sg.IgnoreGuiInset then y += GuiService:GetGuiInset().Y end   -- VirtualInputManager memakai koordinat layar penuh
-    return x, y + POP_YOFF
-end
-
 local SIG_NAMES = { "MouseButton1Down", "MouseButton1Click", "MouseButton1Up", "Activated", "TouchTap" }
 local function FireSignals(btn)      -- memicu event tombol langsung di script game, tanpa input apa pun
     local any = false
@@ -460,47 +442,11 @@ local function FireSignals(btn)      -- memicu event tombol langsung di script g
     end
     return any
 end
-local function MouseClick(x, y)
-    if not VIM then return false end
-    pcall(function()
-        VIM:SendMouseButtonEvent(x, y, 0, true, game, 1)
-        task.wait(0.04)
-        VIM:SendMouseButtonEvent(x, y, 0, false, game, 1)
-    end)
-    return true
-end
-local touchN = 0
-local function TouchClick(x, y)        -- ketukan jari virtual: Roblox tetap mengira kamu di HP (kontrol HP tidak hilang)
-    if not VIM then return false end
-    touchN += 1
-    local id = 90 + (touchN % 5)       -- id jari virtual, dibuat jauh dari id jari asli
-    pcall(function()
-        VIM:SendTouchEvent(id, 0, x, y)     -- jari menyentuh
-        task.wait(0.05)
-        VIM:SendTouchEvent(id, 2, x, y)     -- jari diangkat
-    end)
-    return true
-end
 
--- klik satu pop; return teks hasil untuk ditampilkan di Status
-local function ClickPop(pop)
+local function ClickPop(pop)         -- return teks hasil untuk ditampilkan di Status
     local btn = pop:IsA("GuiButton") and pop or pop:FindFirstChildWhichIsA("GuiButton", true)
-    local target = btn or pop
-    local usesSignal = string.sub(POP_MODE, 1, 6) == "Sinyal"
-    if usesSignal and btn then
-        FireSignals(btn)
-        task.wait(0.12)
-        if not (pop.Parent and Shown(pop)) then return "sinyal klik" end
-    end
-    if POP_MODE == "Sinyal saja" then return "sinyal (pop masih ada)" end
-    local x, y = CenterOf(target)
-    local cam = workspace.CurrentCamera
-    local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
-    if x < 0 or y < 0 or x > vp.X or y > vp.Y then return "pop di luar layar" end
-    local touch = (POP_MODE == "Touch" or POP_MODE == "Sinyal + touch")
-    local ok = touch and TouchClick(x, y) or MouseClick(x, y)
-    if not ok then return "VirtualInputManager tidak ada" end
-    return string.format("klik %s (%d, %d)", touch and "touch" or "mouse", math.floor(x), math.floor(y))
+    if not btn then return "tidak ada tombol di pop" end
+    return FireSignals(btn) and "sinyal klik" or "sinyal gagal (executor tanpa firesignal?)"
 end
 
 local function PopStep()
@@ -511,10 +457,10 @@ local function PopStep()
         local pop = PopObject(c)
         if pop then
             local rec = popSeen[pop]
-            if not rec then rec = { first = now, last = -10 }; popSeen[pop] = rec end
+            if not rec then rec = { last = -10 }; popSeen[pop] = rec end
             if Shown(pop) and pop.AbsoluteSize.X > 2 and pop.AbsoluteSize.Y > 2 then
                 active += 1
-                if now - rec.first >= POP_SETTLE and now - rec.last >= POP_RETRY then
+                if now - rec.last >= POP_RETRY then
                     rec.last = now
                     Stats.popClicks += 1
                     Stats.pop = pop.Name .. ": " .. ClickPop(pop)
@@ -582,41 +528,6 @@ local function TeleportWorld(name)
     N("Teleport", name .. " · " .. (WORLD_NAME[name] or ""), "#6495ED")
 end
 
--- ===== REMOTE LOGGER (untuk melihat argumen skill lain: Clairvoyant Judgement, Arrow Storm, dll.) =====
-local logOn, logLines, oldNc = false, {}, nil
-local function Fmt(v)
-    local t = typeof(v)
-    if t == "number" then return string.format("%.3f", v) end
-    if t == "string" then return '"' .. v .. '"' end
-    if t == "Vector3" or t == "vector" then return string.format("vec(%.2f, %.2f, %.2f)", v.X, v.Y, v.Z) end
-    return tostring(v)
-end
-local function InstallHook()
-    if oldNc then return true end
-    if not (hookmetamethod and getnamecallmethod) then return false end
-    local wrap = newcclosure or function(f) return f end
-    oldNc = hookmetamethod(game, "__namecall", wrap(function(self, ...)
-        if logOn then
-            local m = getnamecallmethod()
-            if (m == "FireServer" or m == "InvokeServer") and typeof(self) == "Instance"
-                and RemotesF and self.Parent == RemotesF and not (checkcaller and checkcaller()) then
-                local args = table.pack(...)
-                local nm = self.Name
-                task.spawn(function()
-                    local parts = {}
-                    for i = 1, args.n do parts[i] = Fmt(args[i]) end
-                    local line = nm .. "(" .. table.concat(parts, ", ") .. ")"
-                    print("[RemoteLog] " .. line)
-                    logLines[#logLines + 1] = line
-                    if #logLines > 6 then table.remove(logLines, 1) end
-                end)
-            end
-        end
-        return oldNc(self, ...)
-    end))
-    return true
-end
-
 -- ===== UI =====
 -- Home dibangun TERAKHIR supaya error di Home tidak menghentikan fitur Main.
 local HomePage   = W:AddPage({ Name = "Home", Icon = "house" })
@@ -664,25 +575,17 @@ cWorld:Button({
 })
 
 local cClick = Main:AddCard({ Title = "Auto Click (Train)", Icon = "zap", Column = 1 })
--- Tanda v di sebelah switch = buka/tutup pengaturan (slider dkk.) lewat Toggle{ Expand = true } + tg:Sub(fn)
-local tgClick = cClick:Toggle({
-    Title = "Auto Click", id = "ae_click", Expand = true,
+cClick:Toggle({
+    Title = "Auto Click", id = "ae_click",
     Callback = function(v)
         clickPulse.on = v
         clickPulse.acc = 0
         N("Auto Click", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
     end,
 })
-tgClick:Sub(function(c)
-    c:Slider({
-        Title = "Kecepatan click (jeda detik, terkecil 0.01)", Min = 0.01, Max = 1, Value = 0.1, Rounding = 2, Suffix = "s", id = "ae_click_speed",
-        Callback = function(v) clickPulse.int = math.max(v, 0.01) end,
-    })
-end)
 
--- Auto Train: tepat di bawah Auto Click
 tgTrain = cClick:Toggle({
-    Title = "Auto Train (teleport sesuai rebirth)", id = "ae_train", Expand = true,
+    Title = "Auto Train", id = "ae_train",
     Callback = function(v)
         if v and tgStage and tgStage.Value then tgStage:Set(false) end     -- Auto Stage & Auto Train sama-sama teleport
         Loop("train", v, function() return TRAIN_INT end, TrainStep)
@@ -690,51 +593,15 @@ tgTrain = cClick:Toggle({
         N("Auto Train", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
     end,
 })
-tgTrain:Sub(function(c)
-    c:Slider({
-        Title = "Jeda cek rebirth (s)", Min = 0.5, Max = 10, Value = 1, Rounding = 1, Suffix = "s", id = "ae_train_int",
-        Callback = function(v) TRAIN_INT = v end,
-    })
-    c:Slider({
-        Title = "Jarak sebelum teleport ulang", Min = 3, Max = 60, Value = 12, Rounding = 0, id = "ae_train_stay",
-        Callback = function(v) TRAIN_STAY = v end,
-    })
-end)
 
--- Auto Click Pop: tepat di bawah Auto Train
-local tgPop = cClick:Toggle({
-    Title = "Auto Click Pop (x2!)", id = "ae_pop", Expand = true,
+cClick:Toggle({
+    Title = "Auto Click Pop (x2!)", id = "ae_pop",
     Callback = function(v)
         Loop("pop", v, function() return 0.1 end, PopStep)
         if not v then Stats.pop = "-" end
         N("Auto Click Pop", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
     end,
 })
-tgPop:Sub(function(c)
-    c:Dropdown({
-        Title = "Cara klik", List = { "Sinyal + touch", "Touch", "Sinyal saja", "Sinyal + mouse", "Mouse" },
-        Value = "Sinyal + touch", id = "ae_pop_mode",
-        Callback = function(v) if v then POP_MODE = tostring(v) end end,
-    })
-    c:Slider({
-        Title = "Tunggu pop stabil sebelum klik (s)", Min = 0, Max = 1.5, Value = 0.25, Rounding = 2, Suffix = "s", id = "ae_pop_settle",
-        Callback = function(v) POP_SETTLE = v end,
-    })
-    c:Slider({
-        Title = "Koreksi posisi Y klik (px)", Min = -120, Max = 120, Value = 0, Rounding = 0, id = "ae_pop_yoff",
-        Callback = function(v) POP_YOFF = v end,
-    })
-    c:Label({ Text = "HP: pakai Touch / Sinyal. Mode Mouse membuat Roblox mengira kamu di PC (joystick hilang)." })
-    c:Button({
-        Title = "Cek folder Pops", Text = "Cek folder Pops",
-        Callback = function()
-            popsCache, popsScanT = nil, 0
-            local f = PopsFolder()
-            if f then N("Folder Pops", f:GetFullName() .. "  ·  isi: " .. #f:GetChildren(), "#50C864", 6)
-            else N("Folder Pops", "Main > HUD > Pops tidak ketemu di PlayerGui", "#DC3232", 6) end
-        end,
-    })
-end)
 
 local cStage = Main:AddCard({ Title = "Auto Stage", Icon = "swords", Column = 1 })
 ddStage = cStage:Dropdown({
@@ -842,19 +709,6 @@ cHatch:Button({
 local cStat = Main:AddCard({ Title = "Status", Icon = "activity", Column = 2 })
 local stLbl = cStat:Label({ Text = "-", Size = 11, Color = "Text" })
 
-local cDbg = Main:AddCard({ Title = "Debug", Icon = "scan", Column = 2, Collapsed = true })
-cDbg:Toggle({
-    Title = "Remote Logger (lihat argumen remote saat main manual)", id = "ae_log",
-    Callback = function(v)
-        if v and not InstallHook() then
-            N("Remote Logger", "Executor tidak mendukung hookmetamethod", "#DC3232", 5)
-            return
-        end
-        logOn = v
-        if v then Remote("Cast") end       -- pastikan RemotesF terisi
-    end,
-})
-
 task.spawn(function()
     while W.Alive do
         task.wait(0.5)
@@ -865,7 +719,6 @@ task.spawn(function()
                 "\nZona train: " .. Stats.zone ..
                 "\nPop: " .. Stats.pop .. "   klik: " .. Stats.popClicks ..
                 "\nHatch: " .. Stats.hatch .. "   total egg: " .. Stats.hatches
-            if logOn and #logLines > 0 then txt ..= "\n— remote terakhir —\n" .. table.concat(logLines, "\n") end
             stLbl:SetText(txt)
         end)
     end
@@ -873,7 +726,6 @@ end)
 
 -- hentikan semua saat Unload
 W:OnUnload(function()
-    logOn = false
     for _, p in ipairs(pulses) do p.on = false end
     for k in pairs(runId) do runId[k] += 1 end
 end)
