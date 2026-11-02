@@ -23,7 +23,7 @@ local RunService = game:GetService("RunService")
 local LP = Players.LocalPlayer
 
 -- ===== LOOP LAMBAT (rebirth, equip pet) =====
-local runId = { rebirth = 0, equip = 0, train = 0, stage = 0, pop = 0, hatch = 0, reward = 0, fuse = 0, boss = 0 }
+local runId = { rebirth = 0, equip = 0, train = 0, stage = 0, stage2 = 0, pop = 0, hatch = 0, reward = 0, fuse = 0, boss = 0 }
 local function Loop(key, enabled, getDelay, fn)
     runId[key] += 1
     if not enabled then return end
@@ -313,19 +313,17 @@ local function TrainStep()
 end
 
 -- ===== AUTO STAGE =====
--- Pilih World + Stage tujuan (N). Siklus (otomatis berulang dari stage awal):
---   tiap stage: teleport ke titik serang -> serang (attack + skill R + skill E) sampai SEMUA musuh di workspace.MyEnemies mati
---   -> teleport ke stage berikutnya.
---   Setelah musuh stage tujuan (N) habis: teleport ke claim trophy stage N (diulang sampai trophy bertambah), lalu mulai lagi dari stage awal.
--- Arah attack & skill = posisi musuh hidup terdekat di MyEnemies (vector dibuat otomatis dari posisi musuh).
-local SPAWN_WAIT    = 4      -- tunggu musuh muncul sesudah teleport (detik); kalau tidak ada yang muncul, lanjut
-local CLEAR_DELAY   = 0.15   -- musuh harus tetap habis (dan attack berhenti) selama ini sebelum stage dianggap selesai
-local STAGE_TIMEOUT = 60     -- batas waktu per stage (pengaman kalau ada musuh yang tidak pernah mati)
-local CLAIM_SETTLE  = 0.1    -- jeda setelah "clear" sebelum pindah ke claim trophy (run direset server +-2.5 detik setelah clear)
-local WAVE_START_WAIT = 5    -- tunggu event wave "start"/"spawn" sesudah teleport; belum ada -> teleport ulang sekali, lalu lanjut
-local CLAIM_WAIT    = 0.8    -- lama menunggu di titik claim tiap percobaan
-local CLAIM_TRIES   = 3      -- maksimal percobaan claim kalau trophy belum bertambah
-local tgStage, tgTrain, tgHatch, tgBoss   -- toggle (diisi di bagian UI)
+-- Pilih World + Stage tujuan (N). Dua versi (toggle terpisah, jangan dinyalakan bersamaan):
+--   Auto Stage      : tiap stage diserang 1 detik (cepat, butuh power besar supaya musuh mati dalam 1 detik)
+--   Auto Stage V2   : tiap stage diserang 5 detik (lambat, untuk power yang belum cukup)
+-- Siklus: stage 1 -> 2 -> ... -> N (stage tujuan) -> teleport ke pad kuning claim trophy stage N (SEKALI) -> ulang dari stage 1.
+-- Arah attack = musuh hidup terdekat di MyEnemies (attack dikirim bersama id musuh seperti attack asli game).
+local STAGE_TIME_FAST = 1     -- detik per stage: Auto Stage
+local STAGE_TIME_SLOW = 5     -- detik per stage: Auto Stage V2
+local LAST_CLEAR_MAX  = 10    -- stage terakhir: kalau wave sudah mulai tapi belum "clear", lanjut menyerang maks segini sebelum claim
+local CLAIM_WAIT      = 1.0   -- lama berdiri di pad claim (satu kali saja)
+local RESET_WAIT      = 4     -- setelah claim, tunggu server mereset run (event Wave "reset") maks segini sebelum ulang dari stage 1
+local tgStage, tgStage2, tgTrain, tgHatch, tgBoss   -- toggle (diisi di bagian UI)
 
 -- ===== PEMANTAU WAVE (remote Wave milik game) =====
 -- Server mengirim semua kejadian stage lewat Remotes.Wave (batch berisi event):
@@ -337,7 +335,7 @@ local tgStage, tgTrain, tgHatch, tgBoss   -- toggle (diisi di bagian UI)
 --   t="reset"                         -> run direset (+-2.5 detik setelah clear kalau tidak lanjut)
 -- Atribut Player: InWave (true saat wave jalan), RunStage, RunCleared, StagesCleared.
 local waveAlive = {}             -- id -> true (musuh hidup menurut server)
-local waveStartN, waveClearN = 0, 0
+local waveStartN, waveClearN, waveResetN = 0, 0, 0
 local waveConn
 local function OnWave(ev)
     if type(ev) ~= "table" then return end
@@ -353,6 +351,7 @@ local function OnWave(ev)
         waveClearN += 1
         table.clear(waveAlive)
     elseif t == "reset" then
+        waveResetN += 1
         table.clear(waveAlive)
     end
 end
@@ -397,19 +396,26 @@ local stagePulse = NewPulse(function()
     Stats.attacks += 1
 end, 0.01)
 
-local function FirePromptsNear(pos)       -- kalau claim memakai ProximityPrompt, ikut ditekan
+local function FirePromptsNear(pos)       -- kalau claim memakai ProximityPrompt: tekan yang PALING dekat saja (maks 10 stud)
     if not fireproximityprompt then return end
     pcall(function()
-        local done = {}
-        for _, p in ipairs(workspace:GetPartBoundsInRadius(pos, 18)) do
-            local pr = p:FindFirstChildWhichIsA("ProximityPrompt")
-            if pr and not done[pr] then done[pr] = true; fireproximityprompt(pr) end
+        local best, bd
+        for _, part in ipairs(workspace:GetPartBoundsInRadius(pos, 10)) do
+            local pr = part:FindFirstChildWhichIsA("ProximityPrompt")
+            if pr then
+                local d = (part.Position - pos).Magnitude
+                if not bd or d < bd then best, bd = pr, d end
+            end
         end
+        if best then fireproximityprompt(best) end
     end)
 end
 
 local function StageOff()
-    task.defer(function() if tgStage then tgStage:Set(false) end end)
+    task.defer(function()
+        if tgStage then tgStage:Set(false) end
+        if tgStage2 then tgStage2:Set(false) end
+    end)
 end
 
 local function AliveEnemies()
@@ -440,55 +446,63 @@ local function GetTrophies()             -- nilai trophy dari leaderstats (kalau
     return nil
 end
 
-local function TouchNear(pos, hrp)       -- sentuh part claim di sekitar titik (kalau trophy diambil lewat Touched)
+local function TouchNear(pos, hrp)       -- sentuh part claim yang PALING dekat dengan titik claim (pad kuning), bukan semua part di sekitarnya
     if typeof(firetouchinterest) ~= "function" then return end
     pcall(function()
         local op = OverlapParams.new()
         op.FilterType = Enum.RaycastFilterType.Exclude
         op.FilterDescendantsInstances = { LP.Character }
-        local done = {}
-        for _, part in ipairs(workspace:GetPartBoundsInRadius(pos, 20, op)) do
-            if not done[part] and part:FindFirstChildWhichIsA("TouchTransmitter") then
-                done[part] = true
-                firetouchinterest(hrp, part, 0)
-                firetouchinterest(hrp, part, 1)
+        local best, bd
+        for _, part in ipairs(workspace:GetPartBoundsInRadius(pos, 8, op)) do
+            if part:FindFirstChildWhichIsA("TouchTransmitter") then
+                local d = (part.Position - pos).Magnitude
+                if not bd or d < bd then best, bd = part, d end
             end
+        end
+        if best then
+            firetouchinterest(hrp, best, 0)
+            firetouchinterest(hrp, best, 1)
         end
     end)
 end
 
--- claim trophy: berdiri tepat di titik claim, sentuh / tekan prompt, ulangi sampai trophy bertambah
-local function ClaimTrophy(cp, id, st)
-    local before = GetTrophies()
-    for try = 1, CLAIM_TRIES do
-        if runId.stage ~= id then return end
-        Stats.stage = string.format("%s · claim trophy stage %d (coba %d)", WORLD, st, try)
-        TP(cp)
-        task.wait(0.15)
+-- claim trophy: SEKALI saja. Berdiri tepat di pad kuning, sentuh / tekan prompt, tunggu CLAIM_WAIT, selesai.
+local function ClaimTrophy(cp, key, id, st)
+    Stats.stage = string.format("%s · claim trophy Stage %d", WORLD, st)
+    TP(cp)
+    task.wait(0.15)
+    local hrp = Root()
+    if hrp then
+        hrp.CFrame = CFrame.new(cp + Vector3.new(0, 0.5, 0))
+        pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end)
+        TouchNear(cp, hrp)
+        FirePromptsNear(cp)
+    end
+    local t = 0
+    while t < CLAIM_WAIT and runId[key] == id do t += task.wait(0.1) end
+end
+
+local function AimAtNearest(ap)              -- bidik musuh hidup terdekat (dan kirim id-nya); kalau tidak ada, bidik titik serang
+    local alive = AliveEnemies()
+    if #alive > 0 then
         local hrp = Root()
-        if hrp then
-            hrp.CFrame = CFrame.new(cp + Vector3.new(0, 0.5, 0))
-            pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end)
-            TouchNear(cp, hrp)
-            FirePromptsNear(cp)
-        end
-        local t = 0
-        while t < CLAIM_WAIT and runId.stage == id do t += task.wait(0.1) end
-        local now = GetTrophies()
-        if before and now then
-            if now > before then return true end
-        elseif try >= 2 then
-            return nil                       -- trophy tidak bisa dibaca: cukup 2 percobaan
-        end
+        local e = NearestOf(alive, hrp and hrp.Position or ap)
+        AimPos = EnemyPos(e) or ap
+        AimId = tonumber(string.match(e.Name, "%d+"))
+    else
+        AimPos, AimId = ap, nil
     end
 end
 
-local function RunStages(id)
+-- key = "stage" / "stage2" (kunci Loop), T = detik serang per stage
+local function RunStages(id, key, T)
     local wd = WORLDS[WORLD]
     if not wd then StageOff() return end
+    local useWave = HookWave()
     local last = math.clamp(STAGE_END, wd.first, wd.last)
+    local resetN = waveResetN
     for st = wd.first, last do
-        if runId.stage ~= id then return end
+        if runId[key] ~= id then return end
         local ap = wd.attack[st]
         if not ap then
             N("Auto Stage", "Waypoint " .. WORLD .. " Stage " .. st .. " belum diisi", "#DC3232", 5)
@@ -496,82 +510,31 @@ local function RunStages(id)
             return
         end
         local tag = string.format("%s · Stage %d/%d", WORLD, st, last)
-        Stats.stage = tag .. " (menuju)"
         if not TP(ap) then task.wait(0.5) return end
-        AimPos = ap
+        AimPos, AimId = ap, nil
         stagePulse.on = true
-        local useWave = HookWave()
-        local tStart = os.clock()
+        local c0, s0 = waveClearN, waveStartN
+        if st == last then resetN = waveResetN end
+        local t0 = os.clock()
+        while runId[key] == id and os.clock() - t0 < T do
+            AimAtNearest(ap)
+            Stats.stage = string.format("%s (serang %.1f/%ds)", tag, os.clock() - t0, T)
+            task.wait(0.05)
+        end
 
-        if useWave then
-            -- stage selesai TEPAT saat server mengirim Wave "clear" (semua musuh mati)
-            local c0, s0 = waveClearN, waveStartN
-            local t0, retried = os.clock(), false
-            while runId.stage == id do
-                local now = os.clock()
-                if waveClearN > c0 then Stats.stage = tag .. " (clear)"; break end
-                local hrp = Root()
-                local models = WaveModels()
-                if #models > 0 then
-                    local e = NearestOf(models, hrp and hrp.Position or ap)
-                    AimPos = EnemyPos(e) or ap
-                    AimId = tonumber(string.match(e.Name, "%d+"))
-                else
-                    AimPos = ap
-                    AimId = next(waveAlive)
-                end
-                if waveStartN > s0 or next(waveAlive) ~= nil then
-                    Stats.stage = string.format("%s (wave jalan, musuh sisa %d)", tag, WaveCount())
-                    if hrp then                              -- tetap di titik serang (kalau terdorong jauh)
-                        local d = hrp.Position - ap
-                        if Vector3.new(d.X, 0, d.Z).Magnitude > 40 then TP(ap) end
-                    end
-                else
-                    Stats.stage = tag .. " (menunggu wave mulai)"
-                    if now - t0 >= WAVE_START_WAIT then
-                        if not retried then
-                            retried = true
-                            TP(ap)
-                            t0 = os.clock()
-                        else
-                            Stats.stage = tag .. " (wave tidak mulai, lanjut)"
-                            break
-                        end
-                    end
-                end
-                if now - tStart > STAGE_TIMEOUT then Stats.stage = tag .. " (timeout, lanjut)"; break end
-                task.wait(0.03)
-            end
-        else
-            -- cadangan (remote Wave tidak ditemukan): pakai daftar MyEnemies
-            local t0, emptySince, seen = os.clock(), nil, false
-            while runId.stage == id do
-                local now = os.clock()
-                local alive = AliveEnemies()
-                if #alive > 0 then
-                    seen, emptySince = true, nil
-                    local hrp = Root()
-                    local e = NearestOf(alive, hrp and hrp.Position or ap)
-                    AimPos = EnemyPos(e) or ap
-                    AimId = tonumber(string.match(e.Name, "%d+"))
-                    Stats.stage = string.format("%s (bunuh musuh, sisa %d)", tag, #alive)
-                else
-                    AimPos, AimId = ap, nil
-                    if seen then
-                        emptySince = emptySince or now
-                        if now - emptySince >= CLEAR_DELAY then break end
-                    elseif now - t0 >= SPAWN_WAIT then
-                        break
-                    end
-                end
-                if now - t0 > STAGE_TIMEOUT then break end
+        -- stage tujuan: kalau wave sudah mulai tapi server belum kirim "clear", terus serang dulu sebelum claim
+        if st == last and useWave and waveStartN > s0 then
+            local tw = os.clock()
+            while runId[key] == id and waveClearN <= c0 and os.clock() - tw < LAST_CLEAR_MAX do
+                AimAtNearest(ap)
+                Stats.stage = tag .. " (menunggu semua musuh mati)"
                 task.wait(0.05)
             end
         end
     end
-    if runId.stage ~= id then return end
+    if runId[key] ~= id then return end
 
-    -- semua musuh sampai stage tujuan sudah mati -> claim trophy stage tujuan
+    -- stage tujuan selesai -> claim trophy stage tujuan (SEKALI), lalu ulang dari stage 1
     stagePulse.on = false
     AimPos, AimId = nil, nil
     local cp = wd.claim[last]
@@ -580,9 +543,14 @@ local function RunStages(id)
         StageOff()
         return
     end
-    local t = 0
-    while t < CLAIM_SETTLE and runId.stage == id do t += task.wait(0.1) end      -- beri waktu server mencatat kill terakhir
-    ClaimTrophy(cp, id, last)
+    ClaimTrophy(cp, key, id, last)
+
+    -- beri waktu server mereset run supaya putaran berikutnya benar-benar mulai dari stage 1
+    if useWave then
+        local tw = os.clock()
+        Stats.stage = string.format("%s · menunggu run direset", WORLD)
+        while runId[key] == id and waveResetN == resetN and os.clock() - tw < RESET_WAIT do task.wait(0.1) end
+    end
 end
 
 -- ===== REDEEM ALL CODES =====
@@ -618,7 +586,7 @@ end
 
 -- Fitur yang berpindah-pindah posisi tidak boleh jalan bersamaan: menyalakan satu mematikan yang lain
 local function OffOthers(keep)
-    for _, tg in ipairs({ tgStage, tgTrain, tgHatch, tgBoss }) do
+    for _, tg in ipairs({ tgStage, tgStage2, tgTrain, tgHatch, tgBoss }) do
         if tg and tg ~= keep and tg.Value then tg:Set(false) end
     end
 end
@@ -1308,15 +1276,27 @@ ddStage = cStage:Dropdown({
     end,
 })
 tgStage = cStage:Toggle({
-    Title = "Auto Stage", Desc = "Attack + skill R/E per stage, claim trophy, ulang otomatis", id = "ae_stage_on",
+    Title = "Auto Stage", Desc = "Cepat: 1 detik per stage, claim trophy sekali, ulang dari stage 1", id = "ae_stage_on",
     Callback = function(v)
         if v then OffOthers(tgStage) end        -- fitur teleport tidak jalan bersamaan
         stagePulse.on = false
         stagePulse.acc = 0
         AimPos, AimId = nil, nil
-        Loop("stage", v, function() return 0.1 end, RunStages)
+        Loop("stage", v, function() return 0.1 end, function(id) RunStages(id, "stage", STAGE_TIME_FAST) end)
         if not v then Stats.stage = "-" end
         N("Auto Stage", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
+    end,
+})
+tgStage2 = cStage:Toggle({
+    Title = "Auto Stage V2", Desc = "Lambat: 5 detik per stage, untuk power yang belum cukup", id = "ae_stage2_on",
+    Callback = function(v)
+        if v then OffOthers(tgStage2) end
+        stagePulse.on = false
+        stagePulse.acc = 0
+        AimPos, AimId = nil, nil
+        Loop("stage2", v, function() return 0.1 end, function(id) RunStages(id, "stage2", STAGE_TIME_SLOW) end)
+        if not v then Stats.stage = "-" end
+        N("Auto Stage V2", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
     end,
 })
 
