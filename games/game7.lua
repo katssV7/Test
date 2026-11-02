@@ -319,12 +319,67 @@ end
 --   Setelah musuh stage tujuan (N) habis: teleport ke claim trophy stage N (diulang sampai trophy bertambah), lalu mulai lagi dari stage awal.
 -- Arah attack & skill = posisi musuh hidup terdekat di MyEnemies (vector dibuat otomatis dari posisi musuh).
 local SPAWN_WAIT    = 4      -- tunggu musuh muncul sesudah teleport (detik); kalau tidak ada yang muncul, lanjut
-local CLEAR_DELAY   = 0.4    -- musuh harus tetap habis selama ini sebelum stage dianggap selesai
+local CLEAR_DELAY   = 0.15   -- musuh harus tetap habis (dan attack berhenti) selama ini sebelum stage dianggap selesai
 local STAGE_TIMEOUT = 60     -- batas waktu per stage (pengaman kalau ada musuh yang tidak pernah mati)
 local CLAIM_SETTLE  = 0.5    -- jeda setelah musuh terakhir mati sebelum pindah ke claim trophy
 local CLAIM_WAIT    = 0.8    -- lama menunggu di titik claim tiap percobaan
 local CLAIM_TRIES   = 3      -- maksimal percobaan claim kalau trophy belum bertambah
 local tgStage, tgTrain, tgHatch, tgBoss   -- toggle (diisi di bagian UI)
+
+-- ===== DETEKTOR "ATTACK MASIH KELUAR" =====
+-- Selama masih ada musuh, attack karakter benar-benar keluar (animasi serangan jalan / server membalas Cast).
+-- Kalau attack berhenti keluar -> tidak ada musuh lagi. Dicek tiap 0.05 detik, berhenti dianggap setelah ATTACK_IDLE tanpa sinyal.
+-- Sinyal dipakai SEBAGAI TAMBAHAN daftar MyEnemies: stage baru selesai kalau MyEnemies kosong DAN attack sudah berhenti.
+local ATTACK_IDLE = 0.1      -- tidak ada sinyal attack selama ini = attack berhenti keluar (detik)
+local ATTACK_CAP  = 1.5      -- pengaman: MyEnemies kosong tapi sinyal attack terus terdeteksi sampai segini -> sinyal diabaikan
+local lastAtk = 0
+local atkSrc = { anim = 0, remote = 0 }
+local function MarkAtk(src) lastAtk = os.clock(); atkSrc[src] += 1 end
+
+local function IsAtkTrack(t)             -- animasi aksi (bukan idle/jalan yang looping)
+    local ok, r = pcall(function() return (not t.Looped) and t.Priority.Value >= Enum.AnimationPriority.Action.Value end)
+    return ok and r
+end
+local function PollAtk()                 -- ada animasi serangan yang sedang jalan?
+    local c = LP.Character
+    local hum = c and c:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+    local ok, tracks = pcall(hum.GetPlayingAnimationTracks, hum)
+    if ok then
+        for _, t in ipairs(tracks) do
+            if IsAtkTrack(t) then MarkAtk("anim") return end
+        end
+    end
+end
+local animConn
+local function HookAnimator(char)
+    if animConn then animConn:Disconnect(); animConn = nil end
+    if not char then return end
+    task.spawn(function()
+        local hum = char:FindFirstChildOfClass("Humanoid") or char:WaitForChild("Humanoid", 5)
+        local an = hum and (hum:FindFirstChildOfClass("Animator") or hum:WaitForChild("Animator", 5))
+        if an then animConn = an.AnimationPlayed:Connect(function(t) if IsAtkTrack(t) then MarkAtk("anim") end end) end
+    end)
+end
+HookAnimator(LP.Character)
+W.Conns[#W.Conns + 1] = LP.CharacterAdded:Connect(HookAnimator)
+
+local function MentionsMe(v, d)          -- balasan server yang menyebut pemain ini (efek attack milik kita)
+    if v == LP or v == LP.Character or v == LP.Name or v == LP.UserId then return true end
+    if type(v) == "table" and (d or 0) < 2 then
+        for _, x in pairs(v) do if MentionsMe(x, (d or 0) + 1) then return true end end
+    end
+    return false
+end
+local castConn
+local function HookCastEvent()
+    if castConn then return end
+    local rc = Remote("Cast")
+    if rc and rc:IsA("RemoteEvent") then
+        castConn = rc.OnClientEvent:Connect(function(...) if MentionsMe({ ... }) then MarkAtk("remote") end end)
+        W.Conns[#W.Conns + 1] = castConn
+    end
+end
 
 local AimPos                   -- posisi bidikan (posisi musuh / titik serang), diperbarui tiap frame
 local stagePulse = NewPulse(function()
@@ -442,14 +497,18 @@ local function RunStages(id)
         if not TP(ap) then task.wait(0.5) return end
         AimPos = ap
         stagePulse.on = true
+        HookCastEvent()
+        lastAtk = 0
 
-        -- serang sampai semua musuh di MyEnemies mati
-        local t0, emptySince, seen = os.clock(), nil, false
+        -- serang sampai semua musuh di MyEnemies mati DAN attack berhenti keluar
+        local t0, emptySince, seen, noListSince = os.clock(), nil, false, nil
         while runId.stage == id do
             local now = os.clock()
+            PollAtk()
             local alive = AliveEnemies()
+            local atkOn = (now - lastAtk) < ATTACK_IDLE
             if #alive > 0 then
-                seen, emptySince = true, nil
+                seen, emptySince, noListSince = true, nil, nil
                 local hrp = Root()
                 local e = NearestOf(alive, hrp and hrp.Position or ap)
                 AimPos = EnemyPos(e) or ap
@@ -458,6 +517,12 @@ local function RunStages(id)
                     local d = hrp.Position - ap
                     if Vector3.new(d.X, 0, d.Z).Magnitude > 40 then TP(ap) end
                 end
+            elseif atkOn and (not noListSince or now - noListSince < ATTACK_CAP) then
+                -- daftar MyEnemies kosong tapi attack masih keluar -> masih ada musuh
+                noListSince = noListSince or now
+                seen, emptySince = true, nil
+                AimPos = ap
+                Stats.stage = tag .. " (attack masih keluar)"
             else
                 AimPos = ap
                 if seen then
@@ -927,6 +992,7 @@ local function BossStep()
         Stats.boss = "menunggu boss muncul (" .. phase .. ")"
         return
     end
+
     if not InArena() then                                  -- belum di arena: kirim join berkala
         stagePulse.on = false; AimPos = nil
         if os.clock() - bossJoinT >= 3 then
