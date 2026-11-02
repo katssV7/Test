@@ -531,8 +531,9 @@ end
 local function RunStages(id)
     local wd = WORLDS[WORLD]
     if not wd then StageOff() return end
+    local st = wd.first
     local last = math.clamp(STAGE_END, wd.first, wd.last)
-    for st = wd.first, last do
+    while st <= last do                 -- "last" dibaca ulang tiap stage: ganti stage tujuan saat jalan langsung berlaku
         if runId.stage ~= id then return end
         local ap = wd.attack[st]
         if not ap then
@@ -585,8 +586,11 @@ local function RunStages(id)
             if now - t0 > STAGE_TIMEOUT then Stats.stage = tag .. " (timeout, lanjut)"; break end
             task.wait(0.05)
         end
+        st += 1
+        last = math.clamp(STAGE_END, wd.first, wd.last)
     end
     if runId.stage ~= id then return end
+    last = math.clamp(STAGE_END, wd.first, wd.last)       -- claim SELALU untuk stage tujuan yang terpilih sekarang
 
     -- semua musuh sampai stage tujuan sudah mati -> claim trophy stage tujuan
     stagePulse.on = false
@@ -631,8 +635,9 @@ end
 local function RunStagesV2(id)
     local wd = WORLDS[WORLD]
     if not wd then StageOff2() return end
+    local st = wd.first
     local last = math.clamp(STAGE_END, wd.first, wd.last)
-    for st = wd.first, last do
+    while st <= last do
         if runId.stage2 ~= id then return end
         local ap = wd.attack[st]
         if not ap then
@@ -654,8 +659,11 @@ local function RunStagesV2(id)
             ShootOnce(ap)
             task.wait(V2_GAP)
         end
+        st += 1
+        last = math.clamp(STAGE_END, wd.first, wd.last)
     end
     if runId.stage2 ~= id then return end
+    last = math.clamp(STAGE_END, wd.first, wd.last)       -- claim SELALU untuk stage tujuan yang terpilih sekarang
 
     local cp = wd.claim[last]
     if not cp then
@@ -695,6 +703,19 @@ local function RedeemAll()
         redeeming = false
         N("Redeem Codes", good .. "/" .. #CODES .. " kode terkirim", good == #CODES and "#50C864" or "#FFA500", 4)
     end)
+end
+
+-- Kalau World / Stage tujuan diganti saat Auto Stage (V1 / V2) sedang menyala, siklus yang berjalan dibatalkan
+-- dan dimulai lagi dari stage awal dengan tujuan yang baru (supaya tidak menyelesaikan siklus dengan tujuan lama).
+local function RestartStage()
+    if tgStage and tgStage.Value then
+        stagePulse.on = false
+        AimPos = nil
+        Loop("stage", true, function() return 0.1 end, RunStages)
+    end
+    if tgStage2 and tgStage2.Value then
+        Loop("stage2", true, function() return 0.1 end, RunStagesV2)
+    end
 end
 
 -- Fitur yang berpindah-pindah posisi tidak boleh jalan bersamaan: menyalakan satu mematikan yang lain
@@ -1321,6 +1342,7 @@ local function ApplyWorld(name, allowTP)
     local wd = WORLDS[name]
     if not wd then return end
     local changed = name ~= WORLD
+    local oldEnd = STAGE_END
     WORLD = name
     if ddStage then
         ddStage:SetList(StageList(name))
@@ -1334,6 +1356,7 @@ local function ApplyWorld(name, allowTP)
         ddEgg:Set(EGG_NAME, true)
     end
     if eggLbl then eggLbl:SetText(EggPriceText()) end
+    if changed or STAGE_END ~= oldEnd then RestartStage() end
     if allowTP and changed and worldTP and worldReady then TeleportWorld(name) end
 end
 
@@ -1385,7 +1408,10 @@ ddStage = cStage:Dropdown({
     Title = "Stage tujuan (titik akhir)", List = StageList("World 1"), Value = "Stage 1", id = "ae_stage",
     Callback = function(v)
         local n = v and tonumber(tostring(v):match("%d+"))
-        if n then STAGE_END = n end
+        if n and n ~= STAGE_END then
+            STAGE_END = n
+            RestartStage()
+        end
     end,
 })
 tgStage = cStage:Toggle({
