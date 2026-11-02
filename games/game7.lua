@@ -23,7 +23,7 @@ local RunService = game:GetService("RunService")
 local LP = Players.LocalPlayer
 
 -- ===== LOOP LAMBAT (rebirth, equip pet) =====
-local runId = { rebirth = 0, equip = 0, train = 0, stage = 0, pop = 0, hatch = 0, reward = 0, fuse = 0, boss = 0 }
+local runId = { rebirth = 0, equip = 0, train = 0, stage = 0, pop = 0, hatch = 0, reward = 0, fuse = 0, boss = 0, stage2 = 0 }
 local function Loop(key, enabled, getDelay, fn)
     runId[key] += 1
     if not enabled then return end
@@ -97,11 +97,61 @@ end
 -- ===== KARAKTER =====
 local function Root() local c = LP.Character; return c and c:FindFirstChild("HumanoidRootPart") end
 
-local function TP(pos)
+-- Teleport mulus (anti glitch):
+--  1. Area tujuan diminta dimuat dulu (StreamingEnabled) supaya karakter tidak jatuh menembus lantai yang belum termuat.
+--  2. Tinggi dihitung dari lantai (raycast) -> kaki pas di lantai, tidak "jatuh" dari ketinggian tebakan.
+--  3. Arah hadap karakter dipertahankan (dulu rotasi di-reset, karakter / kamera berputar mendadak tiap teleport).
+--  4. Dipindah dengan PivotTo (seluruh model sekaligus) + kecepatan di-nol-kan + diam 2 frame supaya fisika tenang.
+local tpParams = RaycastParams.new()
+tpParams.FilterType = Enum.RaycastFilterType.Exclude
+tpParams.IgnoreWater = true
+
+local function PreloadArea(pos)
     local hrp = Root()
+    if hrp and (hrp.Position - pos).Magnitude < 120 then return end          -- dekat: area sudah termuat
+    local done = false
+    task.spawn(function()
+        pcall(function() LP:RequestStreamingAroundAsync(pos, 1) end)
+        done = true
+    end)
+    local t = 0
+    while not done and t < 1.2 do t += task.wait(0.05) end
+end
+
+local function TP(pos)
+    local c = LP.Character
+    local hrp = c and c:FindFirstChild("HumanoidRootPart")
     if not hrp then return false end
-    hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
-    pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end)
+    PreloadArea(pos)
+    c = LP.Character
+    hrp = c and c:FindFirstChild("HumanoidRootPart")
+    if not hrp then return false end
+    local hum = c:FindFirstChildOfClass("Humanoid")
+
+    local ignore = { c }
+    local mine = workspace:FindFirstChild("MyEnemies")
+    if mine then ignore[#ignore + 1] = mine end
+    tpParams.FilterDescendantsInstances = ignore
+    local hit = workspace:Raycast(pos + Vector3.new(0, 6, 0), Vector3.new(0, -60, 0), tpParams)
+    local y
+    if hit then
+        y = hit.Position.Y + (hum and hum.HipHeight or 2) + hrp.Size.Y / 2 + 0.1
+    else
+        y = pos.Y + 3                                                        -- lantai belum terbaca: pakai tinggi titik + 3
+    end
+
+    local rot = hrp.CFrame - hrp.CFrame.Position                             -- pertahankan arah hadap
+    c:PivotTo(CFrame.new(pos.X, y, pos.Z) * rot)
+    pcall(function()
+        hrp.AssemblyLinearVelocity = Vector3.zero
+        hrp.AssemblyAngularVelocity = Vector3.zero
+    end)
+    if not hrp.Anchored then                                                 -- tahan 2 frame agar fisika tenang
+        hrp.Anchored = true
+        RunService.Heartbeat:Wait()
+        RunService.Heartbeat:Wait()
+        if hrp.Parent then hrp.Anchored = false end
+    end
     return true
 end
 
@@ -137,7 +187,7 @@ local WORLDS = {
             [11] = V(3000, 4, -977), [12] = V(2999, 4, -1060), [13] = V(3000, 4, -1146), [14] = V(2997, 4, -1242), [15] = V(3000, 4, -1330),
         },
         claim = {
-            [1] = V(3019, 6, -111),  [2] = V(3015, 7, -198),  [3] = V(3016, 8, -200),   -- stage 3: z -200 sesuai catatan (cek, mungkin -290)
+            [1] = V(3019, 6, -111),  [2] = V(3015, 7, -198),  [3] = V(3016, 8, -290),   -- stage 3: dikoreksi -200 -> -290 (pola semua world: stage 2 ~-200, stage 3 ~-290)
             [4] = V(3021, 6, -380),  [5] = V(3020, 5, -471),  [6] = V(3019, 7, -561),  [7] = V(3020, 7, -652),  [8] = V(3019, 5, -741),
             [9] = V(3018, 5, -829),  [10] = V(3020, 5, -922), [11] = V(3018, 7, -1009), [12] = V(3018, 7, -1102), [13] = V(3021, 7, -1192),
             [14] = V(3019, 7, -1280), [15] = V(3020, 6, -1370),
@@ -324,7 +374,7 @@ local STAGE_TIMEOUT = 60     -- batas waktu per stage (pengaman kalau ada musuh 
 local CLAIM_SETTLE  = 0.5    -- jeda setelah musuh terakhir mati sebelum pindah ke claim trophy
 local CLAIM_WAIT    = 0.8    -- lama menunggu di titik claim tiap percobaan
 local CLAIM_TRIES   = 3      -- maksimal percobaan claim kalau trophy belum bertambah
-local tgStage, tgTrain, tgHatch, tgBoss   -- toggle (diisi di bagian UI)
+local tgStage, tgStage2, tgTrain, tgHatch, tgBoss   -- toggle (diisi di bagian UI)
 
 -- ===== DETEKTOR "ATTACK MASIH KELUAR" =====
 -- Selama masih ada musuh, attack karakter benar-benar keluar (animasi serangan jalan / server membalas Cast).
@@ -455,27 +505,25 @@ local function TouchNear(pos, hrp)       -- sentuh part claim di sekitar titik (
 end
 
 -- claim trophy: berdiri tepat di titik claim, sentuh / tekan prompt, ulangi sampai trophy bertambah
-local function ClaimTrophy(cp, id, st)
+local function ClaimTrophy(cp, id, st, key)
+    key = key or "stage"
     local before = GetTrophies()
     for try = 1, CLAIM_TRIES do
-        if runId.stage ~= id then return end
+        if runId[key] ~= id then return end
         Stats.stage = string.format("%s · claim trophy stage %d (coba %d)", WORLD, st, try)
-        TP(cp)
-        task.wait(0.15)
+        TP(cp)                                   -- TP sudah menaruh kaki tepat di lantai titik claim
         local hrp = Root()
         if hrp then
-            hrp.CFrame = CFrame.new(cp + Vector3.new(0, 0.5, 0))
-            pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end)
             TouchNear(cp, hrp)
             FirePromptsNear(cp)
         end
         local t = 0
-        while t < CLAIM_WAIT and runId.stage == id do t += task.wait(0.1) end
+        while t < CLAIM_WAIT and runId[key] == id do t += task.wait(0.1) end
         local now = GetTrophies()
         if before and now then
             if now > before then return true end
         elseif try >= 2 then
-            return nil                       -- trophy tidak bisa dibaca: cukup 2 percobaan
+            return nil                           -- trophy tidak bisa dibaca: cukup 2 percobaan
         end
     end
 end
@@ -554,6 +602,70 @@ local function RunStages(id)
     ClaimTrophy(cp, id, last)
 end
 
+-- ===== AUTO STAGE V2 =====
+-- Per stage: teleport ke titik serang -> tunggu 1 detik -> tembak otomatis 5x (attack + skill R + skill E ke musuh terdekat)
+-- -> langsung lanjut ke stage berikutnya (tidak menunggu musuh mati). Setelah stage tujuan: claim trophy, lalu ulang dari stage awal.
+local V2_WAIT, V2_SHOTS, V2_GAP = 1, 5, 0.1
+
+local function StageOff2()
+    task.defer(function() if tgStage2 then tgStage2:Set(false) end end)
+end
+
+local function ShootOnce(ap)
+    local hrp = Root()
+    local alive = AliveEnemies()
+    local p = ap
+    if #alive > 0 then
+        local e = NearestOf(alive, hrp and hrp.Position or ap)
+        p = e and EnemyPos(e) or ap
+    end
+    local rc = Remote("Cast")
+    if not rc then return end
+    local v = V3(p.X, p.Y, p.Z)
+    pcall(rc.FireServer, rc, "attack", v)
+    pcall(rc.FireServer, rc, "R", v)
+    pcall(rc.FireServer, rc, "E", v)
+    Stats.attacks += 1
+end
+
+local function RunStagesV2(id)
+    local wd = WORLDS[WORLD]
+    if not wd then StageOff2() return end
+    local last = math.clamp(STAGE_END, wd.first, wd.last)
+    for st = wd.first, last do
+        if runId.stage2 ~= id then return end
+        local ap = wd.attack[st]
+        if not ap then
+            N("Auto Stage V2", "Waypoint " .. WORLD .. " Stage " .. st .. " belum diisi", "#DC3232", 5)
+            StageOff2()
+            return
+        end
+        local tag = string.format("V2 · %s · Stage %d/%d", WORLD, st, last)
+        Stats.stage = tag .. " (menuju)"
+        if not TP(ap) then task.wait(0.5) return end
+
+        Stats.stage = tag .. " (tunggu " .. V2_WAIT .. " dtk)"
+        local t = 0
+        while t < V2_WAIT and runId.stage2 == id do t += task.wait(0.05) end
+
+        for i = 1, V2_SHOTS do
+            if runId.stage2 ~= id then return end
+            Stats.stage = string.format("%s (tembak %d/%d)", tag, i, V2_SHOTS)
+            ShootOnce(ap)
+            task.wait(V2_GAP)
+        end
+    end
+    if runId.stage2 ~= id then return end
+
+    local cp = wd.claim[last]
+    if not cp then
+        N("Auto Stage V2", "Waypoint claim " .. WORLD .. " Stage " .. last .. " belum diisi", "#FFA500", 5)
+        StageOff2()
+        return
+    end
+    ClaimTrophy(cp, id, last, "stage2")
+end
+
 -- ===== REDEEM ALL CODES =====
 -- Tambah kode baru cukup dengan menambah namanya di daftar ini.
 local CODES = { "AWAKEN", "SHARINGAN", "UPDATE1", "NEWWORLDS", "1MILLIONVISITS", "UPDATE2", "KURUMA" }
@@ -587,7 +699,7 @@ end
 
 -- Fitur yang berpindah-pindah posisi tidak boleh jalan bersamaan: menyalakan satu mematikan yang lain
 local function OffOthers(keep)
-    for _, tg in ipairs({ tgStage, tgTrain, tgHatch, tgBoss }) do
+    for _, tg in ipairs({ tgStage, tgStage2, tgTrain, tgHatch, tgBoss }) do
         if tg and tg ~= keep and tg.Value then tg:Set(false) end
     end
 end
@@ -1288,6 +1400,18 @@ tgStage = cStage:Toggle({
         N("Auto Stage", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
     end,
 })
+tgStage2 = cStage:Toggle({
+    Title = "Auto Stage V2", Desc = "Per stage: tunggu 1 dtk, tembak 5x, lanjut stage berikutnya", id = "ae_stage2_on",
+    Callback = function(v)
+        if v then OffOthers(tgStage2) end        -- fitur teleport tidak jalan bersamaan
+        stagePulse.on = false
+        stagePulse.acc = 0
+        AimPos = nil
+        Loop("stage2", v, function() return 0.1 end, RunStagesV2)
+        if not v then Stats.stage = "-" end
+        N("Auto Stage V2", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
+    end,
+})
 
 -- Redeem Codes
 local cCodes = Main:AddCard({ Title = "Rewards & Codes", Icon = "gift", Column = 1 })
@@ -1312,7 +1436,12 @@ tgBoss = cBoss:Toggle({
         if v then OffOthers(tgBoss) end
         stagePulse.on = false; stagePulse.acc = 0; AimPos = nil
         Loop("boss", v, function() return 0.03 end, BossStep)
-        if not v then Stats.boss = "-" end
+        if not v then
+            Stats.boss = "-"
+            slideGoal, dodgeCount = nil, 0
+            local h = Root()
+            if h then h.Anchored = false end             -- jangan sampai karakter tertinggal terkunci
+        end
         N("Auto Boss Kyubi", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
     end,
 })
@@ -1467,6 +1596,9 @@ end)
 
 -- hentikan semua saat Unload
 W:OnUnload(function()
+    slideGoal, dodgeCount = nil, 0
+    local h = Root()
+    if h then h.Anchored = false end
     for _, p in ipairs(pulses) do p.on = false end
     for k in pairs(runId) do runId[k] += 1 end
 end)
