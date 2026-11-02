@@ -108,7 +108,7 @@ end
 -- ===== DATA WORLD / STAGE =====
 -- Per world: attack = titik serang tiap stage, claim = titik claim trophy tiap stage (kunci = nomor stage),
 --            train = { rebirth minimal, posisi } untuk Auto Train.
--- World 3 belum punya waypoint: tinggal isi attack / claim / train-nya.
+-- Kalau ada stage yang belum diisi (mis. claim World 5 stage 11-15), Auto Stage berhenti dan memberi tahu saat sampai di situ.
 local V = Vector3.new
 local WORLDS = {
     ["World 1"] = {
@@ -148,14 +148,57 @@ local WORLDS = {
         },
     },
     ["World 3"] = {
-        first = 1, last = 15, attack = {}, claim = {},        -- attack / claim World 3 BELUM DIISI
+        first = 1, last = 15,
+        attack = {
+            [1] = V(5996, 4, -64),   [2] = V(6000, 4, -157),  [3] = V(5997, 4, -256),  [4] = V(5996, 4, -339),  [5] = V(5995, 4, -430),
+            [6] = V(5999, 4, -523),  [7] = V(5995, 4, -617),  [8] = V(5997, 4, -699),  [9] = V(5998, 4, -788),  [10] = V(5997, 4, -887),
+            [11] = V(5995, 4, -968), [12] = V(5996, 4, -1061), [13] = V(5999, 4, -1148), [14] = V(5999, 4, -1236), [15] = V(6001, 4, -1327),
+        },
+        claim = {
+            [1] = V(6022, 5, -112),  [2] = V(6021, 6, -200),  [3] = V(6020, 6, -291),  [4] = V(6021, 5, -379),  [5] = V(6017, 6, -470),
+            [6] = V(6020, 5, -562),  [7] = V(6019, 6, -650),  [8] = V(6019, 6, -741),  [9] = V(6019, 6, -831),  [10] = V(6019, 6, -920),
+            [11] = V(6018, 7, -1012), [12] = V(6019, 6, -1099), [13] = V(6019, 6, -1191), [14] = V(6017, 6, -1279), [15] = V(6018, 9, -1370),
+        },
         train = {
             { 150, V(5938, 4, 36) },  { 157, V(5911, 5, 37) },  { 164, V(5855, 4, 37) },  { 172, V(5939, 4, 65) },  { 179, V(5882, 4, 63) },
             { 186, V(5857, 4, 65) },  { 193, V(5913, 4, 92) },  { 200, V(5883, 4, 92) },  { 208, V(5940, 4, 121) },
         },
     },
+    ["World 4"] = {
+        first = 1, last = 15,
+        attack = {
+            [1] = V(9002.18, 4.17, -70.60),   [2] = V(8998.77, 4.17, -157.17),  [3] = V(8999.49, 4.17, -253.72),  [4] = V(8998.39, 4.15, -335.20),  [5] = V(8999.70, 4.17, -427.27),
+            [6] = V(9002.47, 4.17, -508.97),  [7] = V(9003.89, 4.17, -620.38),  [8] = V(9001.13, 4.17, -706.02),  [9] = V(9003.07, 4.17, -785.26),  [10] = V(9001.03, 4.17, -884.05),
+            [11] = V(8998.81, 4.17, -975.11), [12] = V(8998.19, 4.17, -1058.58), [13] = V(9000.11, 4.17, -1149.58), [14] = V(8999.65, 4.17, -1243.56), [15] = V(8998.60, 4.17, -1323.14),
+        },
+        claim = {
+            [1] = V(9020.43, 5.45, -114.27),  [2] = V(9019.90, 5.57, -201.31),  [3] = V(9018.36, 5.57, -292.40),  [4] = V(9017.41, 5.57, -381.61),  [5] = V(9018.30, 6.57, -470.55),
+            [6] = V(9017.73, 6.42, -560.87),  [7] = V(9020.52, 6.07, -650.36),  [8] = V(9021.50, 7.69, -741.48),  [9] = V(9022.50, 7.55, -830.34),  [10] = V(9020.63, 6.07, -919.44),
+            [11] = V(9019.97, 6.57, -1009.18), [12] = V(9021.07, 5.57, -1102.00), [13] = V(9021.45, 7.91, -1189.58), [14] = V(9018.94, 7.09, -1279.16), [15] = V(9019.00, 5.98, -1371.32),
+        },
+        train = {
+            { 240, V(8937.39, 4.42, 38.95) },  { 247, V(8910.39, 5.07, 37.46) },  { 254, V(8855.59, 4.42, 37.44) },  { 262, V(8940.53, 4.42, 65.92) },  { 269, V(8883.47, 4.42, 65.80) },
+            { 276, V(8855.75, 4.42, 67.06) },  { 283, V(8911.41, 4.42, 94.96) },  { 290, V(8883.48, 4.42, 94.72) },  { 298, V(8939.30, 4.42, 122.55) },
+        },
+    },
+    ["World 5"] = {
+        first = 1, last = 15,
+        attack = {
+            [1] = V(11998.66, 4.17, -71.55),   [2] = V(11996.89, 4.17, -163.85),  [3] = V(11996.73, 4.17, -244.54),  [4] = V(11998.96, 4.15, -340.09),  [5] = V(11997.58, 4.17, -426.30),
+            [6] = V(11999.24, 4.17, -516.96),  [7] = V(11996.86, 4.17, -607.56),  [8] = V(12001.36, 4.15, -699.28),  [9] = V(12001.24, 4.17, -782.82),  [10] = V(12000.04, 4.17, -878.97),
+            [11] = V(11999.16, 4.17, -964.67), [12] = V(12000.71, 4.17, -1054.90), [13] = V(11997.61, 4.17, -1146.29), [14] = V(11999.52, 4.17, -1233.93), [15] = V(11999.87, 4.17, -1318.46),
+        },
+        claim = {   -- BARU stage 1-10, stage 11-15 belum ada
+            [1] = V(12019.43, 5.57, -112.33),  [2] = V(12018.20, 6.40, -201.81),  [3] = V(12020.21, 5.57, -290.70),  [4] = V(12017.81, 6.48, -381.19),  [5] = V(12019.91, 7.38, -469.35),
+            [6] = V(12018.44, 5.57, -563.75),  [7] = V(12020.47, 7.44, -652.64),  [8] = V(12018.86, 5.57, -740.46),  [9] = V(12019.01, 5.53, -831.01),  [10] = V(12020.83, 7.95, -921.48),
+        },
+        train = {
+            { 300, V(11938.25, 4.42, 36.65) },  { 307, V(11909.67, 5.07, 38.86) },  { 314, V(11855.71, 4.42, 37.69) },  { 322, V(11939.89, 4.42, 65.32) },  { 329, V(11883.55, 4.42, 66.89) },
+            { 336, V(11857.58, 4.42, 64.57) },  { 343, V(11909.59, 4.42, 94.54) },  { 350, V(11883.37, 4.42, 93.39) },  { 358, V(11939.74, 4.42, 120.96) },
+        },
+    },
 }
-local WORLD_ORDER = { "World 1", "World 2", "World 3" }    -- urutan = nomor world untuk remote Teleport
+local WORLD_ORDER = { "World 1", "World 2", "World 3", "World 4", "World 5" }    -- urutan = nomor world untuk remote Teleport
 local WORLD_NAME  = { ["World 1"] = "Shinobi Land", ["World 2"] = "Celestial Realm", ["World 3"] = "Blood Moon" }
 local WORLD, STAGE_END = "World 1", 1                      -- world terpilih dipakai bersama Auto Stage, Auto Train, Auto Hatch
 local function StageList(w)
@@ -177,6 +220,11 @@ local function EnemyAlive(e)
     if not e or not e.Parent then return false end
     local h = e:FindFirstChildOfClass("Humanoid")
     if h and h.Health <= 0 then return false end
+    for _, a in ipairs({ "Health", "health", "HP", "hp" }) do      -- musuh tanpa Humanoid: darah bisa berupa atribut
+        local v = e:GetAttribute(a)
+        if type(v) == "number" and v <= 0 then return false end
+    end
+    if e:GetAttribute("Dead") == true or e:GetAttribute("dead") == true then return false end
     return EnemyPos(e) ~= nil
 end
 local function EnemyList()
@@ -266,12 +314,16 @@ end
 
 -- ===== AUTO STAGE =====
 -- Pilih World + Stage tujuan (N). Siklus (otomatis berulang dari stage awal):
---   tiap stage: teleport ke titik serang -> 1 detik spam (attack + skill R + skill E, jeda 0.01) -> stage berikutnya.
---   Setelah stage N: teleport ke claim trophy stage N (hanya stage tujuan), tunggu 1 detik, lalu mulai lagi dari stage awal.
--- Arah attack & skill = posisi musuh terdekat di workspace.MyEnemies (vector dibuat otomatis dari posisi musuh);
--- kalau belum ada musuh, dipakai titik serang stage itu.
-local STAGE_TIME = 1           -- lama di tiap stage (detik)
-local CLAIM_WAIT = 1           -- lama di trophy sebelum mulai lagi (detik)
+--   tiap stage: teleport ke titik serang -> serang (attack + skill R + skill E) sampai SEMUA musuh di workspace.MyEnemies mati
+--   -> teleport ke stage berikutnya.
+--   Setelah musuh stage tujuan (N) habis: teleport ke claim trophy stage N (diulang sampai trophy bertambah), lalu mulai lagi dari stage awal.
+-- Arah attack & skill = posisi musuh hidup terdekat di MyEnemies (vector dibuat otomatis dari posisi musuh).
+local SPAWN_WAIT    = 4      -- tunggu musuh muncul sesudah teleport (detik); kalau tidak ada yang muncul, lanjut
+local CLEAR_DELAY   = 0.4    -- musuh harus tetap habis selama ini sebelum stage dianggap selesai
+local STAGE_TIMEOUT = 60     -- batas waktu per stage (pengaman kalau ada musuh yang tidak pernah mati)
+local CLAIM_SETTLE  = 0.5    -- jeda setelah musuh terakhir mati sebelum pindah ke claim trophy
+local CLAIM_WAIT    = 0.8    -- lama menunggu di titik claim tiap percobaan
+local CLAIM_TRIES   = 3      -- maksimal percobaan claim kalau trophy belum bertambah
 local tgStage, tgTrain, tgHatch, tgBoss   -- toggle (diisi di bagian UI)
 
 local AimPos                   -- posisi bidikan (posisi musuh / titik serang), diperbarui tiap frame
@@ -302,6 +354,77 @@ local function StageOff()
     task.defer(function() if tgStage then tgStage:Set(false) end end)
 end
 
+local function AliveEnemies()
+    local out = {}
+    for _, e in ipairs(EnemyList()) do
+        if EnemyAlive(e) then out[#out + 1] = e end
+    end
+    return out
+end
+local function NearestOf(list, from)
+    local best, bd
+    for _, e in ipairs(list) do
+        local d = (EnemyPos(e) - from).Magnitude
+        if not bd or d < bd then best, bd = e, d end
+    end
+    return best
+end
+
+local function GetTrophies()             -- nilai trophy dari leaderstats (kalau ada), untuk memastikan claim berhasil
+    local ls = LP:FindFirstChild("leaderstats")
+    if not ls then return nil end
+    for _, v in ipairs(ls:GetChildren()) do
+        if v:IsA("ValueBase") and string.find(string.lower(v.Name), "troph", 1, true) then
+            local n = tonumber((tostring(v.Value):gsub(",", "")))
+            if n then return n end
+        end
+    end
+    return nil
+end
+
+local function TouchNear(pos, hrp)       -- sentuh part claim di sekitar titik (kalau trophy diambil lewat Touched)
+    if typeof(firetouchinterest) ~= "function" then return end
+    pcall(function()
+        local op = OverlapParams.new()
+        op.FilterType = Enum.RaycastFilterType.Exclude
+        op.FilterDescendantsInstances = { LP.Character }
+        local done = {}
+        for _, part in ipairs(workspace:GetPartBoundsInRadius(pos, 20, op)) do
+            if not done[part] and part:FindFirstChildWhichIsA("TouchTransmitter") then
+                done[part] = true
+                firetouchinterest(hrp, part, 0)
+                firetouchinterest(hrp, part, 1)
+            end
+        end
+    end)
+end
+
+-- claim trophy: berdiri tepat di titik claim, sentuh / tekan prompt, ulangi sampai trophy bertambah
+local function ClaimTrophy(cp, id, st)
+    local before = GetTrophies()
+    for try = 1, CLAIM_TRIES do
+        if runId.stage ~= id then return end
+        Stats.stage = string.format("%s · claim trophy stage %d (coba %d)", WORLD, st, try)
+        TP(cp)
+        task.wait(0.15)
+        local hrp = Root()
+        if hrp then
+            hrp.CFrame = CFrame.new(cp + Vector3.new(0, 0.5, 0))
+            pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end)
+            TouchNear(cp, hrp)
+            FirePromptsNear(cp)
+        end
+        local t = 0
+        while t < CLAIM_WAIT and runId.stage == id do t += task.wait(0.1) end
+        local now = GetTrophies()
+        if before and now then
+            if now > before then return true end
+        elseif try >= 2 then
+            return nil                       -- trophy tidak bisa dibaca: cukup 2 percobaan
+        end
+    end
+end
+
 local function RunStages(id)
     local wd = WORLDS[WORLD]
     if not wd then StageOff() return end
@@ -314,32 +437,56 @@ local function RunStages(id)
             StageOff()
             return
         end
-        Stats.stage = string.format("%s · Stage %d (serang)", WORLD, st)
+        local tag = string.format("%s · Stage %d/%d", WORLD, st, last)
+        Stats.stage = tag .. " (menuju)"
         if not TP(ap) then task.wait(0.5) return end
         AimPos = ap
         stagePulse.on = true
-        local t = 0
-        while t < STAGE_TIME and runId.stage == id do
-            local e = NearestEnemy(ap)
-            AimPos = e and EnemyPos(e) or ap
-            t += task.wait()
+
+        -- serang sampai semua musuh di MyEnemies mati
+        local t0, emptySince, seen = os.clock(), nil, false
+        while runId.stage == id do
+            local now = os.clock()
+            local alive = AliveEnemies()
+            if #alive > 0 then
+                seen, emptySince = true, nil
+                local hrp = Root()
+                local e = NearestOf(alive, hrp and hrp.Position or ap)
+                AimPos = EnemyPos(e) or ap
+                Stats.stage = string.format("%s (bunuh musuh, sisa %d)", tag, #alive)
+                if hrp then                                  -- tetap di titik serang (kalau terdorong jauh)
+                    local d = hrp.Position - ap
+                    if Vector3.new(d.X, 0, d.Z).Magnitude > 40 then TP(ap) end
+                end
+            else
+                AimPos = ap
+                if seen then
+                    emptySince = emptySince or now
+                    Stats.stage = tag .. " (musuh habis)"
+                    if now - emptySince >= CLEAR_DELAY then break end
+                else
+                    Stats.stage = workspace:FindFirstChild("MyEnemies") and (tag .. " (menunggu musuh muncul)") or (tag .. " (folder MyEnemies tidak ada)")
+                    if now - t0 >= SPAWN_WAIT then break end
+                end
+            end
+            if now - t0 > STAGE_TIMEOUT then Stats.stage = tag .. " (timeout, lanjut)"; break end
+            task.wait(0.05)
         end
     end
     if runId.stage ~= id then return end
 
-    -- stage tujuan selesai -> claim trophy stage tujuan, tunggu 1 detik, lalu siklus mulai lagi dari stage awal
+    -- semua musuh sampai stage tujuan sudah mati -> claim trophy stage tujuan
     stagePulse.on = false
     AimPos = nil
     local cp = wd.claim[last]
-    if cp then
-        Stats.stage = string.format("%s · Stage %d (claim trophy)", WORLD, last)
-        TP(cp)
-        FirePromptsNear(cp)
-        local t = 0
-        while t < CLAIM_WAIT and runId.stage == id do t += task.wait(0.1) end
-    else
-        N("Auto Stage", "Waypoint claim " .. WORLD .. " Stage " .. last .. " belum diisi", "#FFA500", 4)
+    if not cp then
+        N("Auto Stage", "Waypoint claim " .. WORLD .. " Stage " .. last .. " belum diisi", "#FFA500", 5)
+        StageOff()
+        return
     end
+    local t = 0
+    while t < CLAIM_SETTLE and runId.stage == id do t += task.wait(0.1) end      -- beri waktu server mencatat kill terakhir
+    ClaimTrophy(cp, id, last)
 end
 
 -- ===== REDEEM ALL CODES =====
@@ -780,7 +927,6 @@ local function BossStep()
         Stats.boss = "menunggu boss muncul (" .. phase .. ")"
         return
     end
-
     if not InArena() then                                  -- belum di arena: kirim join berkala
         stagePulse.on = false; AimPos = nil
         if os.clock() - bossJoinT >= 3 then
@@ -923,10 +1069,12 @@ local EGGS = {
     ["World 1"] = { { id = "normal", name = "Normal Egg", price = 10, pos = V(61, 5, 35) }, { id = "shinobi", name = "Shinobi Egg", price = 400, pos = V(85, 5, 34) } },
     ["World 2"] = { { id = "lotus", name = "Lotus Egg", price = 790e6, pos = V(3057, 5, 35) }, { id = "celestial", name = "Celestial Egg", price = 1.8e12, pos = V(3083, 5, 36) } },
     ["World 3"] = { { id = "bloodmoon", name = "Blood Moon Egg", price = 390e15, pos = V(6061, 5, 33) }, { id = "demon", name = "Demon Egg", price = 890e18, pos = V(6083, 5, 36) } },
+    ["World 4"] = { { id = "frost", name = "Frost Egg", price = 195e24, pos = V(9057, 5, 34) }, { id = "abyss", name = "Abyss Egg", price = 440e27, pos = V(9083, 5, 36) } },
+    ["World 5"] = { { id = "nebula", name = "Nebula Egg", price = 97.5e33, pos = V(12060.83, 5.53, 33.88) }, { id = "void", name = "Void Egg", price = 220e36, pos = V(12080.92, 6.37, 29.11) } },
 }
 local EGG_NAME, EGG_COUNT, HATCH_INT = "Normal Egg", 1, 0.3
 
-local NUM_SUF = { "", "K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc" }
+local NUM_SUF = { "", "K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "Oc", "No", "Dc", "Ud" }
 local function FmtNum(n)
     local i = 1
     while n >= 1000 and i < #NUM_SUF do n = n / 1000; i += 1 end
