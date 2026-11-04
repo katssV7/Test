@@ -394,7 +394,7 @@ end
 -- ============================================================
 local machineBusy, farmInStep, farmOn = false, false, false   -- kunci supaya farm rock & urusan mesin tidak teleport bersamaan
 local SELL_INTERVAL, CUT_INTERVAL, STONE_INTERVAL = 10, 4, 5
-local STONE_RETRY = 5                      -- detik: mesin yang baru di-collect tidak di-collect lagi sebelum jeda ini (anti spam)
+local STONE_RETRY = 1                      -- detik: mesin yang baru di-collect tidak di-collect lagi sebelum jeda ini (anti spam)
 local BASE_INDEX = 1                       -- urutan FinalBaseModel milikmu (1 = paling atas) kalau pemilik tidak terdeteksi otomatis
 local placedAt = {}                            -- [uuid] = waktu terakhir diletakkan ke mesin
 
@@ -834,7 +834,7 @@ tgCut:Sub(function(c)
         Callback = function(v) BASE_INDEX = v end,
     })
     c:Slider({
-        Title = "Siklus cut tiap (s)", Min = 2, Max = 30, Value = CUT_INTERVAL, Rounding = 0, Suffix = "s", id = "cr_cutint",
+        Title = "Siklus cut tiap (s)", Min = 0.1, Max = 30, Value = CUT_INTERVAL, Rounding = 0, Suffix = "s", id = "cr_cutint",
         Callback = function(v) CUT_INTERVAL = v end,
     })
 end)
@@ -884,7 +884,7 @@ local tgStone = cStone:Toggle({
 })
 tgStone:Sub(function(c)
     c:Slider({
-        Title = "Scan mesin tiap (s)", Min = 2, Max = 30, Value = STONE_INTERVAL, Rounding = 0, Suffix = "s", id = "cr_stoneint",
+        Title = "Scan mesin tiap (s)", Min = 0.1, Max = 30, Value = STONE_INTERVAL, Rounding = 0, Suffix = "s", id = "cr_stoneint",
         Callback = function(v) STONE_INTERVAL = v end,
     })
 end)
