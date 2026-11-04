@@ -1,62 +1,85 @@
--- ============================================================
---  CUT A ROCK — Auto Collect Supreme Vein
---  Struktur: workspace.Rooms.Room_0 .. Room_39 > Rocks > (model rock, nama = jenis vein)
---
---  CARA KERJA:
---   1. Scan ulang SEMUA Rooms tiap SCAN_INTERVAL detik (rock bisa hilang/muncul lagi
---      dengan jenis berbeda di posisi yang sama, jadi tidak boleh pakai daftar tetap).
---   2. Kalau ada Supreme Vein: teleport "melompat" lewat centroid tiap room secara berurutan
---      dari room terdekat pemain sampai room tujuan (bukan loncat jauh sekali), baru
---      teleport pas ke Supreme Vein itu, lalu langsung collect lewat ProximityPrompt
---      (fireproximityprompt, tidak perlu tekan/tahan manual).
---   3. Kalau Supreme Vein TIDAK ADA di semua room: pergi ke room yang riwayatnya paling
---      banyak menghasilkan Supreme Vein (dihitung sendiri selama script jalan), lalu
---      collect rock apa pun yang ada di room itu (supaya slot kosong & room "menghasilkan"
---      rock baru, siapa tahu Supreme).
---   4. "Tas penuh": dihitung dari internal counter dibandingkan Max Backpack yang kamu
---      isi sendiri di menu, BUKAN dibaca dari UI game (lihat catatan #2 di bawah).
---
---  CATATAN / ASUMSI YANG PERLU KAMU VERIFIKASI:
---   1. Collect pakai fireproximityprompt ke ProximityPrompt asli di tiap rock (seperti kamu
---      minta: "ga usah ditekan dulu"). Ini TIDAK memanggil remote CepTasSil secara manual -
---      begitu prompt di-fire, script GAME itu sendiri yang mengirim remote dengan GUID yang
---      benar. Kalau executor kamu tidak punya fireproximityprompt, fitur ini tidak jalan
---      (akan muncul peringatan sekali di konsol).
---   2. MAX BACKPACK: saya TIDAK tahu cara baca sisa slot tas dari game (butuh SimpleSpy/UI
---      scan lebih lanjut). Jadi script menghitung sendiri (internal counter) tiap berhasil
---      collect SESUATU, dan berhenti kalau sudah mencapai angka yang kamu isi di menu.
---      Kalau kamu jual/kosongkan tas secara manual di game, tekan tombol RESET di menu.
---   3. BUANG ITEM SELAIN SUPREME: belum saya buat, karena saya belum tahu remote untuk
---      membuang 1 item dari tas (CepTasSil kemungkinan cuma untuk collect, bukan buang).
---      Kalau kamu kirim hasil SimpleSpy/attack_probe waktu kamu buang 1 item manual di game,
---      saya tambahkan fungsi buangnya. Untuk sekarang, mode "farm room terbaik" HANYA
---      collect (tidak membuang), jadi tas bisa penuh berisi campuran sebelum sempat dapat
---      Supreme lagi — pantau manual dulu.
---   4. Lompat per-room (bukan loncat 1x jauh) itu tebakan saya dari permintaan kamu soal
---      "dijangkau studnya dulu" — kemungkinan supaya tidak kena anti-cheat jarak teleport,
---      atau supaya room ter-load. Kalau masih bermasalah (kena kick / room tidak sempat
---      muncul), beri tahu saya gejalanya biar saya perhalus jedanya.
--- ============================================================
+-- KatssinnnHub | Game 8 (Cut a Rock)
+-- Sidebar: Home / Main / Settings (library: ui.lua)
+-- Fitur: Auto Collect Supreme Vein — scan semua Rooms, teleport berurutan antar room (bukan sekali loncat jauh),
+--        collect lewat ProximityPrompt (instan), fallback farm room penghasil Supreme terbanyak.
+local BASE = "https://raw.githubusercontent.com/katssV7/Test/refs/heads/main/"
+local UI = loadstring(game:HttpGet(BASE .. "ui.lua"))()
+
+local W = UI:CreateWindow({
+    Title     = "KatssinnnHub",
+    Version   = "v1.0",
+    Game      = "Cut a Rock",
+    Folder    = "KatssinnnHub/CutARock",
+    ToggleKey = Enum.KeyCode.RightControl,
+})
+
+local function N(title, desc, color, dur)
+    W:Notify({ Title = title, Desc = desc or "", Color = color or "#6495ED", Duration = dur or 3 })
+end
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local LP = Players.LocalPlayer
 
-if getgenv and getgenv().__CUTROCK then pcall(getgenv().__CUTROCK) end  -- matikan instance lama
+-- ===== LOOP (sama pola dengan game7) =====
+local runId = { collect = 0 }
+local function Loop(key, enabled, getDelay, fn)
+    runId[key] += 1
+    if not enabled then return end
+    local id = runId[key]
+    task.spawn(function()
+        while runId[key] == id do
+            local ok, err = pcall(fn, id)
+            if not ok then warn("[" .. key .. "] " .. tostring(err)) end
+            task.wait(getDelay())
+        end
+    end)
+end
 
--- ===== KONFIGURASI =====
+-- ============================================================
+--  AUTO COLLECT SUPREME VEIN
+--  Struktur: workspace.Rooms.Room_0 .. Room_39 > Rocks > (model rock, nama = jenis vein)
+--
+--  CARA KERJA:
+--   1. Scan ulang SEMUA Rooms tiap SCAN_INTERVAL detik (rock bisa hilang/muncul lagi dengan
+--      jenis berbeda di posisi yang sama, jadi tidak boleh pakai daftar tetap).
+--   2. Kalau ada Supreme Vein: teleport berurutan lewat titik tengah tiap room dari room
+--      terdekat pemain sampai room tujuan (bukan sekali loncat jauh), baru teleport pas ke
+--      Supreme Vein itu, lalu langsung collect lewat ProximityPrompt (fireproximityprompt,
+--      tidak perlu tahan tombol manual).
+--   3. Kalau Supreme Vein TIDAK ADA di semua room: pergi ke room yang riwayatnya paling
+--      banyak menghasilkan Supreme Vein (dihitung sendiri selama script jalan), lalu collect
+--      rock apa pun yang ada di room itu (supaya slot kosong & room "menghasilkan" rock baru).
+--   4. "Tas penuh": dihitung dari internal counter dibandingkan Max Backpack yang kamu isi
+--      sendiri di menu, BUKAN dibaca dari UI game (lihat CATATAN #2 di bawah).
+--
+--  CATATAN / ASUMSI YANG PERLU KAMU VERIFIKASI:
+--   1. Collect pakai fireproximityprompt ke ProximityPrompt asli di tiap rock. Ini TIDAK
+--      memanggil remote CepTasSil secara manual — begitu prompt di-fire, script GAME itu
+--      sendiri yang mengirim remote dengan GUID yang benar. Kalau executor kamu tidak punya
+--      fireproximityprompt, fitur ini tidak jalan (peringatan muncul sekali di konsol).
+--   2. MAX BACKPACK: saya TIDAK tahu cara baca sisa slot tas dari game (butuh SimpleSpy/UI
+--      scan lebih lanjut). Jadi script menghitung sendiri (internal counter) tiap berhasil
+--      collect SESUATU, dan berhenti kalau sudah mencapai angka yang kamu isi di menu.
+--      Kalau kamu jual/kosongkan tas secara manual di game, tekan tombol Reset Counter.
+--   3. BUANG ITEM SELAIN SUPREME: belum dibuat, karena belum tahu remote untuk membuang 1
+--      item dari tas. Mode "farm room terbaik" HANYA collect (tidak membuang), jadi tas bisa
+--      penuh berisi campuran sebelum sempat dapat Supreme lagi — pantau manual dulu. Kirim
+--      hasil SimpleSpy/attack_probe waktu kamu buang 1 item manual, nanti saya tambahkan.
+--   4. Teleport per-room (bukan sekali loncat jauh) itu tebakan saya dari permintaan "dijangkau
+--      studnya dulu" — kemungkinan supaya tidak kena anti-cheat jarak teleport, atau supaya
+--      room ter-load. Kalau masih bermasalah, beri tahu gejalanya biar jedanya diperhalus.
+-- ============================================================
 local SCAN_INTERVAL = 1        -- detik, scan ulang semua Rooms
 local ROOM_FIRST, ROOM_LAST = 0, 39
 local TARGET_VEIN = "supreme_vein"
-local HOP_WAIT = 0.15          -- jeda tiap lompat 1 room (beri waktu room ter-load)
+local HOP_WAIT = 0.15          -- jeda tiap teleport 1 room (beri waktu room ter-load)
 local COLLECT_WAIT = 0.2       -- jeda setelah fireproximityprompt sebelum lanjut
 local FARM_HOP_WAIT = 0.12     -- jeda antar rock saat farm room terbaik
 
--- ===== STATE =====
 local maxBackpack = 10
 local collected = 0
-local running = false
-local status = "-"
+local Stats = { status = "-" }
 local supremeCountByRoom = {}      -- [roomIndex] = jumlah Supreme yang sudah diambil dari room itu
 local roomCentroid = {}            -- [roomIndex] = Vector3 rata-rata posisi rock di room itu
 local rocksByRoom = {}             -- [roomIndex] = { rockInstance, ... }
@@ -65,7 +88,6 @@ local supremeList = {}             -- { {inst, pos, prompt, room}, ... } — has
 local roomsFolder = workspace:FindFirstChild("Rooms") or workspace:WaitForChild("Rooms", 10)
 local warnedNoPrompt = false
 
--- ===== KARAKTER / TELEPORT =====
 local function Root() local c = LP.Character; return c and c:FindFirstChild("HumanoidRootPart") end
 local function TP(pos)
     local hrp = Root()
@@ -75,7 +97,6 @@ local function TP(pos)
     return true
 end
 
--- ===== BACA ROCK =====
 local function RockPos(inst)
     if inst:IsA("Model") then
         local ok, cf = pcall(function() return inst:GetPivot() end)
@@ -97,7 +118,6 @@ local function FindPrompt(inst)
     return nil
 end
 
--- ===== SCAN SEMUA ROOMS =====
 local function Scan()
     table.clear(supremeList)
     table.clear(roomCentroid)
@@ -130,20 +150,24 @@ local function Scan()
         end
     end
 end
+task.spawn(function()
+    while true do
+        pcall(Scan)
+        task.wait(SCAN_INTERVAL)
+    end
+end)
 
--- ===== COLLECT (fireproximityprompt, instan tanpa tahan tombol) =====
 local function Collect(prompt)
     if typeof(fireproximityprompt) ~= "function" then
         if not warnedNoPrompt then
             warnedNoPrompt = true
-            warn("[CutRock] Executor tidak punya fireproximityprompt: tidak bisa auto-collect")
+            N("Auto Collect", "Executor tidak punya fireproximityprompt: tidak bisa auto-collect", "#DC3232", 6)
         end
         return false
     end
     return pcall(fireproximityprompt, prompt, 0)
 end
 
--- ===== LOMPAT PER-ROOM (bukan loncat jauh sekali) =====
 local function NearestRoomIndex(pos)
     local best, bd
     for i, c in pairs(roomCentroid) do
@@ -152,13 +176,13 @@ local function NearestRoomIndex(pos)
     end
     return best
 end
-local function HopToRoom(targetRoom)
+local function HopToRoom(id, targetRoom)
     local hrp = Root()
     if not hrp then return end
     local cur = NearestRoomIndex(hrp.Position) or targetRoom
     local step = targetRoom >= cur and 1 or -1
     for i = cur, targetRoom, step do
-        if not running then return end
+        if runId.collect ~= id then return end
         local c = roomCentroid[i]
         if c then
             TP(c)
@@ -167,48 +191,47 @@ local function HopToRoom(targetRoom)
     end
 end
 
--- ===== LANGKAH UTAMA =====
 local function BestHistoryRoom()
     local bestRoom, bestN
     for i, n in pairs(supremeCountByRoom) do
         if not bestN or n > bestN then bestRoom, bestN = i, n end
     end
-    return bestRoom or ROOM_LAST   -- belum ada riwayat -> anggap room terakhir (paling sering Supreme dari data awal)
+    return bestRoom or ROOM_LAST   -- belum ada riwayat -> anggap room terakhir
 end
 
-local function Step()
+local function CollectStep(id)
     if collected >= maxBackpack then
-        status = string.format("tas penuh (%d/%d) — tekan RESET setelah kamu jual/kosongkan di game", collected, maxBackpack)
+        Stats.status = string.format("tas penuh (%d/%d) — tekan Reset Counter setelah jual/kosongkan di game", collected, maxBackpack)
+        task.wait(1)
         return
     end
 
     if #supremeList > 0 then
         local target = supremeList[1]
-        status = "menuju Supreme Vein di Room_" .. target.room
-        HopToRoom(target.room)
-        if not running then return end
+        Stats.status = "menuju Supreme Vein di Room_" .. target.room
+        HopToRoom(id, target.room)
+        if runId.collect ~= id then return end
         TP(target.pos)
         task.wait(COLLECT_WAIT)
         if Collect(target.prompt) then
             collected += 1
             supremeCountByRoom[target.room] = (supremeCountByRoom[target.room] or 0) + 1
-            status = string.format("ambil Supreme Vein (%d/%d) · Room_%d", collected, maxBackpack, target.room)
+            Stats.status = string.format("ambil Supreme Vein (%d/%d) · Room_%d", collected, maxBackpack, target.room)
         else
-            status = "gagal collect, coba lagi..."
+            Stats.status = "gagal collect, coba lagi..."
         end
         return
     end
 
-    -- tidak ada Supreme Vein di mana pun -> ke room penghasil Supreme terbanyak (riwayat)
     local bestRoom = BestHistoryRoom()
-    status = "Supreme Vein habis, menuju Room_" .. bestRoom .. " (penghasil terbanyak)"
-    HopToRoom(bestRoom)
-    if not running then return end
+    Stats.status = "Supreme Vein habis, menuju Room_" .. bestRoom .. " (penghasil terbanyak)"
+    HopToRoom(id, bestRoom)
+    if runId.collect ~= id then return end
 
     local list = rocksByRoom[bestRoom] or {}
     for _, rk in ipairs(list) do
-        if not running or collected >= maxBackpack then return end
-        if rk.Parent then          -- rock bisa hilang selagi loop (sudah di-collect orang lain / respawn)
+        if runId.collect ~= id or collected >= maxBackpack then return end
+        if rk.Parent then          -- rock bisa hilang selagi loop (sudah di-collect / respawn)
             local pos = RockPos(rk)
             local prompt = FindPrompt(rk)
             if pos and prompt then
@@ -218,10 +241,10 @@ local function Step()
                     collected += 1
                     if rk.Name == TARGET_VEIN then
                         supremeCountByRoom[bestRoom] = (supremeCountByRoom[bestRoom] or 0) + 1
-                        status = string.format("ambil Supreme Vein (%d/%d) · Room_%d", collected, maxBackpack, bestRoom)
+                        Stats.status = string.format("ambil Supreme Vein (%d/%d) · Room_%d", collected, maxBackpack, bestRoom)
                     else
                         -- CATATAN #3: belum tahu remote buang item, jadi item non-Supreme TETAP di tas
-                        status = string.format("farm Room_%d: ambil %s (%d/%d)", bestRoom, rk.Name, collected, maxBackpack)
+                        Stats.status = string.format("farm Room_%d: ambil %s (%d/%d)", bestRoom, rk.Name, collected, maxBackpack)
                     end
                 end
             end
@@ -229,125 +252,74 @@ local function Step()
     end
 end
 
--- ===== LOOP (scan + jalan) =====
-task.spawn(function()
-    while true do
-        pcall(Scan)
-        task.wait(SCAN_INTERVAL)
-    end
-end)
-task.spawn(function()
-    while true do
-        if running then
-            local ok, err = pcall(Step)
-            if not ok then warn("[CutRock] " .. tostring(err)) end
+-- ===== UI =====
+local HomePage = W:AddPage({ Name = "Home", Icon = "house" })
+local Main = W:AddPage({ Name = "Main", Icon = "gem" })
+
+local cConfig = Main:AddCard({ Title = "Konfigurasi", Icon = "settings", Column = 1 })
+cConfig:Input({
+    Title = "Max Backpack", Value = tostring(maxBackpack), Placeholder = "mis. 10",
+    ButtonText = "Set", id = "cr_maxbag",
+    Callback = function(v)
+        local n = tonumber(v)
+        if n and n > 0 then maxBackpack = math.floor(n) end
+    end,
+    OnButton = function(v)
+        local n = tonumber(v)
+        if n and n > 0 then
+            maxBackpack = math.floor(n)
+            N("Max Backpack", "Diset ke " .. maxBackpack, "#50C864")
         end
-        task.wait(0.1)
+    end,
+})
+cConfig:Button({
+    Title = "Reset Counter", Text = "Reset Counter (setelah jual/kosongkan tas)",
+    Callback = function()
+        collected = 0
+        N("Reset Counter", "Counter dikembalikan ke 0", "#50C864")
+    end,
+})
+
+local cAuto = Main:AddCard({ Title = "Auto Collect Supreme Vein", Icon = "pickaxe", Column = 1 })
+local tgCollect = cAuto:Toggle({
+    Title = "Auto Collect Supreme Vein", Desc = "Scan semua Rooms, kejar Supreme Vein, fallback ke room penghasil terbanyak", id = "cr_auto",
+    Expand = true,
+    Callback = function(v)
+        Loop("collect", v, function() return 0.1 end, CollectStep)
+        if not v then Stats.status = "-" end
+        N("Auto Collect Supreme Vein", v and "ON" or "OFF", v and "#50C864" or "#DC3232")
+    end,
+})
+tgCollect:Sub(function(c)
+    c:Slider({
+        Title = "Jeda tiap teleport antar room (s)", Min = 0.05, Max = 1, Value = HOP_WAIT, Rounding = 2, Suffix = "s", id = "cr_hopwait",
+        Callback = function(v) HOP_WAIT = v end,
+    })
+    c:Slider({
+        Title = "Scan ulang Rooms tiap (s)", Min = 0.5, Max = 5, Value = SCAN_INTERVAL, Rounding = 1, Suffix = "s", id = "cr_scanint",
+        Callback = function(v) SCAN_INTERVAL = v end,
+    })
+end)
+
+local cStat = Main:AddCard({ Title = "Status", Icon = "activity", Column = 2 })
+local stLbl = cStat:Label({ Text = "-", Size = 11, Color = "Text" })
+
+task.spawn(function()
+    while W.Alive do
+        task.wait(0.5)
+        pcall(function()
+            local parts = {}
+            for i, n in pairs(supremeCountByRoom) do parts[#parts + 1] = string.format("Room_%d=%d", i, n) end
+            table.sort(parts)
+            local txt = "Status: " .. Stats.status ..
+                "\nCollected: " .. collected .. " / " .. maxBackpack ..
+                "\nRiwayat Supreme: " .. (next(supremeCountByRoom) and table.concat(parts, ", ") or "-")
+            stLbl:SetText(txt)
+        end)
     end
 end)
 
--- ===== GUI =====
-local parent = (gethui and gethui()) or game:GetService("CoreGui")
-local ok0 = pcall(function() local _ = parent.Name end)
-if not ok0 then parent = LP:WaitForChild("PlayerGui") end
-local sg = Instance.new("ScreenGui")
-sg.Name = "CutRockHub"; sg.ResetOnSpawn = false; sg.DisplayOrder = 999
-if syn and syn.protect_gui then pcall(syn.protect_gui, sg) end
-sg.Parent = parent
-
-local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 300, 0, 190)
-frame.Position = UDim2.new(1, -310, 0, 60)
-frame.BackgroundColor3 = Color3.fromRGB(18, 18, 24)
-frame.BorderSizePixel = 0
-frame.Active = true
-frame.Draggable = true
-frame.Parent = sg
-Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
-
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -10, 0, 22); title.Position = UDim2.new(0, 8, 0, 2)
-title.BackgroundTransparency = 1; title.Font = Enum.Font.GothamBold; title.TextSize = 13
-title.TextColor3 = Color3.fromRGB(255, 200, 80); title.TextXAlignment = Enum.TextXAlignment.Left
-title.Text = "CUT A ROCK  •  Auto Supreme Vein"; title.Parent = frame
-
-local statusLbl = Instance.new("TextLabel")
-statusLbl.Size = UDim2.new(1, -16, 0, 50); statusLbl.Position = UDim2.new(0, 8, 0, 26)
-statusLbl.BackgroundColor3 = Color3.fromRGB(10, 10, 14); statusLbl.BorderSizePixel = 0
-statusLbl.Font = Enum.Font.Code; statusLbl.TextSize = 11; statusLbl.TextWrapped = true
-statusLbl.TextColor3 = Color3.fromRGB(210, 210, 220)
-statusLbl.TextXAlignment = Enum.TextXAlignment.Left; statusLbl.TextYAlignment = Enum.TextYAlignment.Top
-statusLbl.Text = "-"; statusLbl.Parent = frame
-Instance.new("UICorner", statusLbl).CornerRadius = UDim.new(0, 6)
-Instance.new("UIPadding", statusLbl).PaddingLeft = UDim.new(0, 6)
-
-local mbLbl = Instance.new("TextLabel")
-mbLbl.Size = UDim2.new(0, 90, 0, 24); mbLbl.Position = UDim2.new(0, 8, 0, 82)
-mbLbl.BackgroundTransparency = 1; mbLbl.Font = Enum.Font.Gotham; mbLbl.TextSize = 12
-mbLbl.TextColor3 = Color3.new(1, 1, 1); mbLbl.TextXAlignment = Enum.TextXAlignment.Left
-mbLbl.Text = "Max Backpack:"; mbLbl.Parent = frame
-
-local mbBox = Instance.new("TextBox")
-mbBox.Size = UDim2.new(0, 70, 0, 24); mbBox.Position = UDim2.new(0, 110, 0, 82)
-mbBox.BackgroundColor3 = Color3.fromRGB(35, 38, 55); mbBox.BorderSizePixel = 0
-mbBox.Font = Enum.Font.GothamBold; mbBox.TextSize = 13; mbBox.TextColor3 = Color3.new(1, 1, 1)
-mbBox.Text = tostring(maxBackpack); mbBox.ClearTextOnFocus = false; mbBox.Parent = frame
-Instance.new("UICorner", mbBox).CornerRadius = UDim.new(0, 6)
-
-local function Btn(text, x, y, w, h, fn)
-    local b = Instance.new("TextButton")
-    b.Size = UDim2.new(0, w, 0, h); b.Position = UDim2.new(0, x, 0, y)
-    b.BackgroundColor3 = Color3.fromRGB(45, 48, 70); b.BorderSizePixel = 0
-    b.Font = Enum.Font.GothamBold; b.TextSize = 12; b.TextColor3 = Color3.new(1, 1, 1)
-    b.Text = text; b.Parent = frame
-    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
-    b.MouseButton1Click:Connect(function() fn(b) end)
-    return b
-end
-
-Btn("Set", 190, 82, 50, 24, function()
-    local n = tonumber(mbBox.Text)
-    if n and n > 0 then
-        maxBackpack = math.floor(n)
-        status = "Max Backpack diset ke " .. maxBackpack
-    end
+-- hentikan semua saat Unload
+W:OnUnload(function()
+    runId.collect += 1
 end)
-
-local toggleBtn
-toggleBtn = Btn("MULAI", 8, 114, 130, 28, function(b)
-    running = not running
-    b.Text = running and "STOP" or "MULAI"
-    status = running and "memulai..." or "berhenti"
-end)
-Btn("RESET", 146, 114, 70, 28, function()
-    collected = 0
-    status = "counter direset ke 0"
-end)
-Btn("TUTUP", 222, 114, 70, 28, function()
-    if getgenv and getgenv().__CUTROCK then getgenv().__CUTROCK() end
-end)
-
-local histLbl = Instance.new("TextLabel")
-histLbl.Size = UDim2.new(1, -16, 0, 34); histLbl.Position = UDim2.new(0, 8, 0, 150)
-histLbl.BackgroundTransparency = 1; histLbl.Font = Enum.Font.Gotham; histLbl.TextSize = 10
-histLbl.TextColor3 = Color3.fromRGB(160, 160, 170); histLbl.TextWrapped = true
-histLbl.TextXAlignment = Enum.TextXAlignment.Left; histLbl.TextYAlignment = Enum.TextYAlignment.Top
-histLbl.Text = ""; histLbl.Parent = frame
-
--- refresh tampilan
-local conns = {}
-conns[#conns + 1] = RunService.Heartbeat:Connect(function()
-    statusLbl.Text = string.format("Status: %s\nCollected: %d / %d", status, collected, maxBackpack)
-    local parts = {}
-    for i, n in pairs(supremeCountByRoom) do parts[#parts + 1] = string.format("Room_%d=%d", i, n) end
-    table.sort(parts)
-    histLbl.Text = "Riwayat Supreme: " .. (next(supremeCountByRoom) and table.concat(parts, ", ") or "-")
-end)
-
-local function Shutdown()
-    running = false
-    for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
-    if sg then sg:Destroy() end
-    if getgenv then getgenv().__CUTROCK = nil end
-end
-if getgenv then getgenv().__CUTROCK = Shutdown end
