@@ -12,7 +12,7 @@ local Games = {
     [113384248926706] = "games/game6.lua",   -- Harpoon a fish
     [97617452700163] = "games/game7.lua",   -- Anime Eyes
     [113742027864370] = "games/game8.lua",  -- Cut A Rock
-}
+    [134904927910814] = "games/game9.lua",  -- Fishing Slayer
 
 local path = Games[game.PlaceId]
 
