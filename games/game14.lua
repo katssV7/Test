@@ -36,7 +36,7 @@ local CFG = {
     holdTime = 1.0,         -- cadangan: lama tahan (detik) kalau bar tidak terbaca
     biteFallback = 3.0,
     minigameDelay = 1.00,   -- jeda setelah FishDataResponse sebelum CatchFish
-    castGap = 1.5,          -- jeda sebelum lempar lagi
+    castGap = 2,          -- jeda sebelum lempar lagi
     hitTol = 0.5,           -- toleransi klik minigame
     mode = "skip",          -- "skip" atau "mini"
 }
