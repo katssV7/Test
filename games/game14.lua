@@ -45,7 +45,7 @@ local CFG = {
     pursuitVmax = 132,      -- kecepatan maks jarum Pursuit (deg/s)
     pursuitBand = 0.15,     -- toleransi (x setengah lebar zona) sebelum membalik; makin kecil = makin rapat tapi makin sering klik
     pursuitLead = 0.06,     -- kompensasi latensi klik (detik)
-    debugPursuit = false,   -- true = rekam log Pursuit, otomatis disalin ke clipboard tiap tahap selesai
+    debugPursuit = true,   -- true = rekam log Pursuit, otomatis disalin ke clipboard tiap tahap selesai
     memLead = 0.05,         -- Memory: klik lebih awal sekian detik (kompensasi latensi)
     memGap = 2.5,           -- Memory: tidak ada titik baru selama ini = fase tonton selesai
     debugMemory = false,    -- true = log Memory disalin ke clipboard saat tahap selesai
