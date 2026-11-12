@@ -46,8 +46,8 @@ local CFG = {
     pursuitBand = 0.15,     -- toleransi (x setengah lebar zona) sebelum membalik; makin kecil = makin rapat tapi makin sering klik
     pursuitLead = 0.06,     -- kompensasi latensi klik (detik)
     pursuitCool = 0.33,     -- jeda minimum antar klik Pursuit. Game mengabaikan klik < ~0.3 dtk dari klik sebelumnya (hasil log), dan klik yang diabaikan ikut menunda klik berikutnya
-    debugPursuit = true,    -- true = rekam log Pursuit, otomatis disalin ke clipboard tiap tahap selesai
-    memLead = 0.05,         -- Memory: klik lebih awal sekian detik (kompensasi latensi)
+    debugPursuit = false,    -- true = rekam log Pursuit, otomatis disalin ke clipboard tiap tahap selesai
+    memLead = 0.03,         -- Memory: klik lebih awal sekian detik (kompensasi latensi)
     memGap = 2.5,           -- Memory: tidak ada titik baru selama ini = fase tonton selesai
     debugMemory = true,    -- true = log Memory disalin ke clipboard saat tahap selesai
     pursuitMirror = false,  -- true kalau ternyata ada 2 zona berseberangan
