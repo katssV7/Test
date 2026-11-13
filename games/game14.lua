@@ -7,10 +7,10 @@ local BASE = "https://raw.githubusercontent.com/katssV7/Test/refs/heads/main/"
 local UI = loadstring(game:HttpGet(BASE .. "ui.lua"))()
 
 local W = UI:CreateWindow({
-    Title     = "KatssinnnHub",
+    Title     = "Sevoice",
     Version   = "v1.0",
     Game      = "Rod And Reef",
-    Folder    = "KatssinnnHub/RodAndReef",
+    Folder    = "Sevoice/RodAndReef",
     ToggleKey = Enum.KeyCode.RightControl,
 })
 
@@ -961,12 +961,12 @@ for _, step in ipairs({
 }) do
     local ok, err = pcall(step)
     if not ok then
-        warn("[KatssinnnHub] UI error: " .. tostring(err))
+        warn("[Sevoice] UI error: " .. tostring(err))
         N("UI error", tostring(err), "#DC3232", 10)
     end
 end
 
 W:SelectPage("Main")
 W:Ready()
-W:OnBooted(function() N("KatssinnnHub", "Rod And Reef dimuat  ·  RCtrl untuk buka/tutup", "#50C864", 4) end)
+W:OnBooted(function() N("Sevoice", "Rod And Reef dimuat  ·  RCtrl untuk buka/tutup", "#50C864", 4) end)
 print("[Rod And Reef] Auto Fishing siap.")
