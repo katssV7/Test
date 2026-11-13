@@ -20,19 +20,19 @@ local BASE = "https://raw.githubusercontent.com/katssV7/Test/" .. COMMIT .. "/"
 -- TOGGLE_LOGO = logo di tombol kotak saat UI di-hide (sementara sama dengan LOGO sampai ID-nya diisi).
 -- DEFAULT_BG = foto latar bawaan. DEFAULT_BG_TINT = true kalau gambarnya putih/abu (netral) supaya warnanya ikut tema;
 -- gambar yang sudah berwarna (misal merah) TIDAK bisa diganti hue-nya oleh Roblox, jadi biarkan false.
-local LOGO = "rbxassetid://114970756473569"
+local LOGO = "rbxassetid://106149234534596"
 local TOGGLE_LOGO = LOGO
-local DEFAULT_BG = "rbxassetid://107978478948861"
+local DEFAULT_BG = "rbxassetid://129469230516044"
 local DEFAULT_BG_TINT = false
 -- Foto latar per tema (satu foto per warna). Kalau accent bukan preset persis (custom), dipakai foto tema yang warnanya paling dekat.
 -- Red = DEFAULT_BG di atas. Isi ID lain di sini kalau mau ganti.
 local BG_BY_THEME = {
     Red      = DEFAULT_BG,
-    Cyan     = "rbxassetid://96252377381926",
-    Purple   = "rbxassetid://88478764809196",
-    Pink     = "rbxassetid://74628477645863",
-    Midnight = "rbxassetid://85937156097348",
-    Lime     = "rbxassetid://129373316031477",
+    Cyan     = "rbxassetid://83946423252760",
+    Purple   = "rbxassetid://119996053211609",
+    Pink     = "rbxassetid://129116794323570",
+    Midnight = "rbxassetid://115748858197783",
+    Lime     = "rbxassetid://126692309004772",
 }
 
 local Lib, Window = {}, {}
