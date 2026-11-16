@@ -46,10 +46,10 @@ local CFG = {
     pursuitBand = 0.15,     -- tolerance (x half zone width) before reversing; smaller = tighter but more clicks
     pursuitLead = 0.06,     -- click latency compensation (seconds)
     pursuitCool = 0.33,     -- minimum gap between Pursuit clicks. The game ignores clicks < ~0.3 s after the previous one (from log), and ignored clicks also delay the next click
-    debugPursuit = true,    -- true = record Pursuit log, auto-copied to clipboard when a stage ends
+    debugPursuit = false,    -- true = record Pursuit log, auto-copied to clipboard when a stage ends
     memLead = 0.05,         -- Memory: click this many seconds early (latency compensation)
     memGap = 2.5,           -- Memory: no new spot for this long = watch phase finished
-    debugMemory = true,    -- true = Memory log copied to clipboard when a stage ends
+    debugMemory = false,    -- true = Memory log copied to clipboard when a stage ends
     pursuitMirror = false,  -- true if there turn out to be 2 opposite zones
     mode = "skip",          -- "skip" or "mini"
 }
