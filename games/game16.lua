@@ -21,8 +21,8 @@ local UI = loadstring(game:HttpGet(BASE .. "ui.lua"))()
 local W = UI:CreateWindow({
     Title     = "Sevoice",
     Version   = "v1.0",
-    Game      = "Game 16",
-    Folder    = "Sevoice/Game16",
+    Game      = "Mount Floresia",
+    Folder    = "Sevoice/Mount Floresia",
     ToggleKey = Enum.KeyCode.RightControl,
 })
 
@@ -475,7 +475,7 @@ W:OnUnload(function() stop() end)
 -- Player and Home (+ Settings) live in ui.lua; each part is wrapped against errors.
 for _, step in ipairs({
     function() W:BuildPlayer(PlayerPage) end,
-    function() W:BuildHome({ Game = "Game 16", Version = "v1.0" }, HomePage) end,
+    function() W:BuildHome({ Game = "Mount Floresia", Version = "v1.0" }, HomePage) end,
 }) do
     local ok, err = pcall(step)
     if not ok then
@@ -486,5 +486,5 @@ end
 
 W:SelectPage("Main")
 W:Ready()
-W:OnBooted(function() N("Sevoice", "Game 16 loaded  ·  RCtrl to open/close", "#50C864", 4) end)
-print("[Game 16] Auto Fishing ready.")
+W:OnBooted(function() N("Sevoice", "Mount Floresia loaded  ·  RCtrl to open/close", "#50C864", 4) end)
+print("[Mount Floresia] Auto Fishing ready.")
