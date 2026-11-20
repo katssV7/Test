@@ -17,6 +17,7 @@ local Games = {
     [113515915341334] = "games/game14.lua",  -- Rod And Reef
     [136092481121389] = "games/game15.lua",   -- Mount Usai
     [90267473725422] = "games/game16.lua",  -- Mount Floresia
+    [84314122599999] = "games/game17.lua",  -- Mount Nestapa
 }    
 
 local path = Games[game.PlaceId]
